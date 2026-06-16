@@ -52,6 +52,13 @@ As cinco modificações abaixo introduzem a skin `excrtx` e o rebranding Hermes 
 - **Reaplicar se:** upstream adicionar skins (muda a mesma string em todos os locales) ou novos idiomas.
 - **Conflito provável:** `static/i18n.js` — médio. Mesma chave repetida por idioma; upstream toca nela ao introduzir skins.
 
+### MOD-006: Tradução PT-BR completa — 125 chaves (v0.51.440 base)
+- **Arquivos:** `static/i18n.js`
+- **Tipo:** frontend (i18n)
+- **Propósito:** traduzir 125 chaves faltantes no bloco `pt:` para PT-BR, elevando cobertura de 91.4% para 99.9%. Cobre MCP (59 chaves), excalidraw (9), insights (7), previews CSV/HTML/PDF (15), skills (5), YOLO (5), e 14 domínios menores. Termos técnicos mantidos em inglês (MCP, YOLO, tokens, CSV, HTML, PDF, diff, patch, sandbox, schema, runtime, stdio, timeout, job, archive).
+- **Reaplicar se:** upstream adicionar novas chaves no bloco `en:` ou alterar a ordem dos blocos de locale.
+- **Conflito provável:** `static/i18n.js` — baixo. Bloco aditivo no fim do locale `pt:`, sem alterar chaves existentes.
+
 ---
 
 ## Workflow de atualização (rebase)
