@@ -5235,7 +5235,8 @@ main.main > .main-view:not([id="mainChat"]):not([id="mainSettings"]) .main-view-
 .workspace-artifact-empty{padding:16px 8px;color:var(--muted);font-size:12px;line-height:1.5;text-align:center;}
 .workspace-artifact-item{display:block;width:100%;text-align:left;background:var(--surface-subtle);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px;cursor:pointer;}
 .workspace-artifact-item:hover{border-color:var(--accent);}
-.workspace-artifact-path{font-family:'SF Mono',ui-monospace,monospace;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.workspace-artifact-name{font-size:12.5px;font-weight:550;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.workspace-artifact-path{font-family:'SF Mono',ui-monospace,monospace;font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;}
 .workspace-artifact-meta{margin-top:3px;color:var(--muted);font-size:11px;}
 .workspace-artifacts-count{opacity:.65;font-size:11px;}
 .rightpanel[data-active-tab="artifacts"] .breadcrumb-bar,.rightpanel[data-active-tab="artifacts"] .file-tree,.rightpanel[data-active-tab="artifacts"] #wsEmptyState{display:none!important;}
@@ -6059,3 +6060,30 @@ html[data-conversation-outline="enabled"] #outlineToggleBtn:not([hidden]){displa
 .acervo-row{display:flex;gap:10px;padding:6px 2px;border-bottom:1px solid var(--border);font-size:12px;}
 .acervo-k{flex:0 0 110px;color:var(--muted);}
 .acervo-v{flex:1;color:var(--text);word-break:break-word;}
+
+/* MOD-008: cross-microverse knowledge browser */
+.acervo-mv-grid{display:grid;grid-template-columns:1fr;gap:6px;padding:8px 10px 16px;}
+.acervo-mv-card{display:flex;flex-direction:column;gap:4px;width:100%;text-align:left;cursor:pointer;
+  padding:10px 11px;border:1px solid var(--border);border-radius:8px;background:var(--panel,var(--bg));color:var(--text);}
+.acervo-mv-card:hover{border-color:var(--accent,#1376ed);}
+.acervo-mv-name{font-size:13px;font-weight:600;}
+.acervo-mv-desc{font-size:11px;color:var(--muted);line-height:1.4;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.acervo-mv-meta{font-size:10px;color:var(--muted);}
+.acervo-mv-head{padding:8px 10px 4px;}
+.acervo-kn{display:flex;flex-direction:column;gap:5px;padding:9px 10px;border:1px solid var(--border);
+  border-radius:8px;background:var(--panel,var(--bg));}
+.acervo-kn-desc{font-size:10.5px;color:var(--muted);line-height:1.4;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.acervo-ctx-btn{margin-left:auto;font-size:10px;padding:2px 8px;border:1px solid var(--accent,#1376ed);
+  background:transparent;color:var(--accent,#1376ed);border-radius:999px;cursor:pointer;line-height:1.5;}
+.acervo-ctx-btn:hover{background:var(--accent,#1376ed);color:#fff;}
+.acervo-ctx-btn.staged{border-color:#22c55e;color:#22c55e;}
+/* MOD-008: staged-context chip tray (sibling of #attachTray) */
+.ctx-tray{display:flex;flex-wrap:wrap;gap:6px;padding:4px 0;}
+.ctx-tray[hidden]{display:none;}
+.ctx-chip{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:3px 8px;
+  border:1px solid var(--accent,#1376ed);border-radius:999px;color:var(--accent,#1376ed);background:transparent;}
+.ctx-chip .ctx-chip-ico{opacity:.8;}
+.ctx-chip button{background:none;border:none;color:inherit;cursor:pointer;padding:0;display:inline-flex;opacity:.7;}
+.ctx-chip button:hover{opacity:1;}

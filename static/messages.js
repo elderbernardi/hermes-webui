@@ -1072,6 +1072,13 @@ async function send(){
   let uploaded=[];
   try{uploaded=await uploadPendingFiles();}
   catch(e){if(!text){setComposerStatus(`Upload error: ${e.message}`);return;}}
+  // MOD-008: include acervo items staged via "Adicionar ao contexto" as attachments
+  // for this turn, then clear the staging.
+  if(Array.isArray(S.pendingContextAttachments)&&S.pendingContextAttachments.length){
+    uploaded=uploaded.concat(S.pendingContextAttachments.map(a=>({name:a.name,path:a.path,mime:a.mime,size:a.size,is_image:a.is_image})));
+    S.pendingContextAttachments=[];
+    if(typeof renderStagedContextChips==='function') renderStagedContextChips();
+  }
   // Clear the uploading status now that upload is done — if we don't clear here
   // it stays visible for the entire duration of the agent stream, since
   // setComposerStatus('') is only called in setBusy(false), not setBusy(true).

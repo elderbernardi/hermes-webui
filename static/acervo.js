@@ -102,14 +102,23 @@ function _acRenderCatalog(root){
   const data = _acervoData || [];
   const sessionIds = _acSessionIds();
   const views = [
-    {k:'pipeline',  l:_acL('Pipeline','Pipeline')},
-    {k:'microverso',l:_acL('Microverso','Microverse')},
-    {k:'task',      l:_acL('Tarefa','Task')},
-    {k:'gallery',   l:_acL('Galeria','Gallery')},
+    {k:'pipeline',   l:_acL('Pipeline','Pipeline')},
+    {k:'microverses',l:_acL('Microversos','Microverses')},
+    {k:'task',       l:_acL('Tarefa','Task')},
+    {k:'gallery',    l:_acL('Galeria','Gallery')},
   ];
   const chips = views.map(v =>
     `<button type="button" class="acervo-chip${_acervoView===v.k?' active':''}" onclick="setAcervoView('${v.k}')">${esc(v.l)}</button>`
   ).join('');
+  // Cross-microverse knowledge browser is a distinct mode (not artifact-based).
+  if(_acervoView === 'microverses'){
+    root.innerHTML = `<div class="acervo-toolbar">
+      <div class="acervo-views">${chips}</div>
+      <div class="acervo-tools"><button type="button" class="acervo-icon-btn" title="${esc(_acL('Atualizar','Refresh'))}" onclick="acervoRefreshMicroverses()">⟳</button></div>
+    </div><div class="acervo-body" id="acMvBody"></div>`;
+    _acRenderMicroversesInto(document.getElementById('acMvBody'));
+    return;
+  }
   // Declutter filters: loose notes and archived items are hidden by default.
   const noteCount = data.filter(a => a.kind === 'note').length;
   const archivedCount = data.filter(a => a.status === 'archived').length;
@@ -152,10 +161,8 @@ function _acRenderCatalog(root){
 function _acViewBody(data, sessionIds){
   if(_acervoView === 'pipeline') return _acRenderPipeline(data, sessionIds);
   if(_acervoView === 'gallery')  return _acRenderGallery(data, sessionIds);
-  const keyOf = _acervoView === 'microverso'
-    ? (a => a.primary_microverso || _acL('Sem microverso','No microverse'))
-    : (a => a.task_id || _acL('Sem tarefa','No task'));
-  return _acRenderGroups(data, sessionIds, keyOf);
+  // 'task' (default): group by originating task.
+  return _acRenderGroups(data, sessionIds, a => a.task_id || _acL('Sem tarefa','No task'));
 }
 
 function _acRenderPipeline(data, sessionIds){
@@ -193,6 +200,125 @@ function _acRenderGallery(data, sessionIds){
   return '<div class="acervo-grid acervo-grid-wide">'+data.map(a=>_acCard(a,sessionIds)).join('')+'</div>';
 }
 
+/* ---------- cross-microverse knowledge browser (MOD-008) ---------- */
+let _acMvList = null;        // cached [{slug,name,description,type,natures}]
+let _acMvOpenSlug = null;    // selected microverse (drilldown)
+let _acMvPages = {};         // `${slug}|${nature}` -> pages[]
+
+function acervoRefreshMicroverses(){ _acMvList = null; _acMvPages = {}; renderAcervo(false); }
+function openMicroverse(slug){ _acMvOpenSlug = slug; renderAcervo(false); }
+function closeMicroverse(){ _acMvOpenSlug = null; renderAcervo(false); }
+
+async function _acFetchMicroverses(){
+  if(_acMvList) return _acMvList;
+  try{
+    const d = await api('/api/acervo/microverses?session_id=' + encodeURIComponent(S.session.session_id));
+    _acMvList = Array.isArray(d && d.microverses) ? d.microverses : [];
+  }catch(e){ _acMvList = []; }
+  return _acMvList;
+}
+async function _acFetchKnowledge(slug, nature){
+  const key = slug + '|' + (nature || '');
+  if(_acMvPages[key]) return _acMvPages[key];
+  try{
+    const d = await api('/api/acervo/knowledge?session_id=' + encodeURIComponent(S.session.session_id) +
+      '&scope=micro&slug=' + encodeURIComponent(slug) + (nature ? '&nature=' + encodeURIComponent(nature) : ''));
+    _acMvPages[key] = Array.isArray(d && d.pages) ? d.pages : [];
+  }catch(e){ _acMvPages[key] = []; }
+  return _acMvPages[key];
+}
+
+async function _acRenderMicroversesInto(host){
+  if(!host) return;
+  host.innerHTML = '<div class="acervo-empty">' + esc(_acL('Carregando…','Loading…')) + '</div>';
+  if(_acMvOpenSlug){
+    const list = await _acFetchMicroverses();
+    const pages = await _acFetchKnowledge(_acMvOpenSlug, '');
+    const mv = list.find(m => m.slug === _acMvOpenSlug) || {slug:_acMvOpenSlug, name:_acMvOpenSlug, natures:{}};
+    host.innerHTML = _acMvDetailHtml(mv, pages);
+  }else{
+    host.innerHTML = _acMvListHtml(await _acFetchMicroverses());
+  }
+}
+
+function _acMvListHtml(list){
+  if(!list || !list.length) return '<div class="acervo-empty">' + esc(_acL('Nenhum microverso encontrado.','No microverses found.')) + '</div>';
+  return '<div class="acervo-mv-grid">' + list.map(m => {
+    const total = Object.values(m.natures || {}).reduce((a,b) => a + b, 0);
+    return `<button type="button" class="acervo-mv-card" onclick="openMicroverse('${esc(m.slug)}')">
+      <div class="acervo-mv-name">🌐 ${esc(m.name || m.slug)}</div>
+      ${m.description ? `<div class="acervo-mv-desc">${esc(m.description)}</div>` : ''}
+      <div class="acervo-mv-meta">${total} ${esc(_acL('páginas','pages'))}</div>
+    </button>`;
+  }).join('') + '</div>';
+}
+
+function _acMvDetailHtml(mv, pages){
+  const byNat = {};
+  for(const p of (pages || [])){ (byNat[p.nature] = byNat[p.nature] || []).push(p); }
+  const nats = Object.keys(byNat).sort();
+  let body;
+  if(!pages || !pages.length){
+    body = '<div class="acervo-empty">' + esc(_acL('Sem páginas de conhecimento aqui.','No knowledge pages here.')) + '</div>';
+  }else{
+    body = nats.map(nat => `<div class="acervo-group">
+      <div class="acervo-group-head">${esc(_acNatureLabel(nat))} <span class="acervo-count">${byNat[nat].length}</span></div>
+      <div class="acervo-grid">${byNat[nat].map(_acKnowledgeCard).join('')}</div>
+    </div>`).join('');
+  }
+  return `<div class="acervo-mv-head">
+    <button type="button" class="acervo-back" onclick="closeMicroverse()">‹ ${esc(_acL('Microversos','Microverses'))}</button>
+    <div class="acervo-detail-title"><span>🌐 ${esc(mv.name || mv.slug)}</span></div>
+    ${mv.description ? `<div class="acervo-mv-desc">${esc(mv.description)}</div>` : ''}
+  </div>${body}`;
+}
+
+function _acKnowledgeCard(p){
+  const kind = p.kind ? `<span class="acervo-micro">${esc(p.kind)}</span>` : '';
+  const cls = p['class'] ? `<span class="acervo-micro">${esc(p['class'])}</span>` : '';
+  return `<div class="acervo-kn">
+    <div class="acervo-card-top"><span class="acervo-ico">📄</span><span class="acervo-name" title="${esc(p.title)}">${esc(p.title)}</span></div>
+    ${p.description ? `<div class="acervo-kn-desc">${esc(p.description)}</div>` : ''}
+    <div class="acervo-card-meta">${kind}${cls}
+      <button type="button" class="acervo-ctx-btn" data-ctx="${esc(p.rel_path)}" onclick="acervoAddToContext(this.dataset.ctx, this)">+ ${esc(_acL('Contexto','Context'))}</button>
+    </div>
+  </div>`;
+}
+
+// Stage an acervo page as an attachment for the next message (reuses the chat
+// attachments pipeline via /api/acervo/stage-context). MOD-008.
+async function acervoAddToContext(relPath, btnEl){
+  if(!S.session || !relPath) return;
+  if(!Array.isArray(S.pendingContextAttachments)) S.pendingContextAttachments = [];
+  if(S.pendingContextAttachments.some(a => a._ctxSource === relPath)){
+    if(typeof showToast === 'function') showToast(_acL('Já está no contexto','Already in context'), 2500);
+    return;
+  }
+  try{
+    const r = await api('/api/acervo/stage-context', {method:'POST',
+      body: JSON.stringify({session_id: S.session.session_id, source: relPath})});
+    if(r && r.path){
+      S.pendingContextAttachments.push({name:r.name, path:r.path, mime:r.mime,
+        size:r.size, is_image:!!r.is_image, _ctxSource:relPath});
+      if(typeof showToast === 'function') showToast(_acL('Adicionado ao contexto da próxima mensagem','Added to next message context'), 3000, 'success');
+      if(btnEl){ btnEl.classList.add('staged'); btnEl.textContent = '✓ ' + _acL('No contexto','In context'); }
+      if(typeof renderStagedContextChips === 'function') renderStagedContextChips();
+    }
+  }catch(e){
+    if(typeof showToast === 'function') showToast(_acL('Falha ao adicionar ao contexto','Failed to add to context') + (e && e.message ? ': ' + e.message : ''), 6000, 'error');
+  }
+}
+
+function _acNatureLabel(nat){
+  return ({
+    context:_acL('Contexto','Context'), knowledge:_acL('Conhecimento','Knowledge'),
+    contracts:_acL('Contratos','Contracts'), workflows:'Workflows',
+    decisions:_acL('Decisões','Decisions'), templates:'Templates',
+    tools:_acL('Ferramentas','Tools'), skills:'Skills', persona:'Persona',
+    prompts:'Prompts', reflections:_acL('Reflexões','Reflections'),
+  })[nat] || (nat ? nat[0].toUpperCase() + nat.slice(1) : nat);
+}
+
 /* ----------------------------- card ----------------------------- */
 function _acCard(a, sessionIds){
   const st = _acStatus(a.status);
@@ -214,6 +340,10 @@ function _acCard(a, sessionIds){
 }
 
 /* ----------------------------- detail ----------------------------- */
+// Invalidate per-session acervo state so a chat switch never shows the previous
+// session's catalog or a stale detail drawer (MOD-008).
+function resetAcervoForSession(){ _acervoDetailId = null; _acervoData = null; _acervoFetchedFor = null; }
+
 function openAcervoDetail(id){ _acervoDetailId = id; renderAcervo(false); }
 function closeAcervoDetail(){ _acervoDetailId = null; renderAcervo(false); }
 function setAcervoView(v){ _acervoView = v; renderAcervo(false); }

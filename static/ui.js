@@ -5,7 +5,7 @@
 // legacy reverse-scan over S.messages — that keeps new clients working
 // against old servers (Phase 1 may not yet be deployed everywhere).
 // See api/todo_state.py for the wire contract.
-const S={session:null,messages:[],entries:[],busy:false,pendingFiles:[],toolCalls:[],activeStreamId:null,currentDir:'.',activeProfile:'default',activeProfileIsDefault:true,showHiddenWorkspaceFiles:false,todos:[],todoStateMeta:null};
+const S={session:null,messages:[],entries:[],busy:false,pendingFiles:[],pendingContextAttachments:[],toolCalls:[],activeStreamId:null,currentDir:'.',activeProfile:'default',activeProfileIsDefault:true,showHiddenWorkspaceFiles:false,todos:[],todoStateMeta:null};
 
 function assistantDisplayName(){
   if(S.activeProfile&&S.activeProfile!=='default') return S.activeProfile.charAt(0).toUpperCase()+S.activeProfile.slice(1);
@@ -13593,6 +13593,22 @@ function renderTray(){ // non-media files use paperclip chip
     };
     tray.appendChild(chip);
   });
+}
+// MOD-008: chips for acervo items staged via "Adicionar ao contexto". Rendered in
+// a tray sibling to #attachTray; sent as attachments with the next message.
+function renderStagedContextChips(){
+  const tray=$('ctxTray'); if(!tray) return;
+  const items=Array.isArray(S.pendingContextAttachments)?S.pendingContextAttachments:[];
+  tray.innerHTML='';
+  if(!items.length){ tray.hidden=true; if(typeof updateSendBtn==='function')updateSendBtn(); return; }
+  tray.hidden=false;
+  items.forEach((a,i)=>{
+    const chip=document.createElement('div');chip.className='attach-chip ctx-chip';
+    chip.innerHTML=`<span class="ctx-chip-ico">📎</span> ${esc(a.name||'context')} <button title="${typeof t==='function'?t('remove_title'):'Remove'}">${typeof li==='function'?li('x',12):'×'}</button>`;
+    chip.querySelector('button').onclick=()=>{ S.pendingContextAttachments.splice(i,1); renderStagedContextChips(); };
+    tray.appendChild(chip);
+  });
+  if(typeof updateSendBtn==='function')updateSendBtn();
 }
 function _uploadTooLargeMessage(file){
   const fileSizeMb=Math.ceil(((file&&file.size)||0)/1024/1024);

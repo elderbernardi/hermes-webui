@@ -7495,6 +7495,12 @@ def handle_get(handler, parsed) -> bool:
         return _handle_artifact_zip(handler, parsed)
     if parsed.path == "/api/acervo/artifacts":
         return _handle_acervo_artifacts(handler, parsed)
+    if parsed.path == "/api/acervo/microverses":
+        return _handle_acervo_microverses(handler, parsed)
+    if parsed.path == "/api/acervo/knowledge":
+        return _handle_acervo_knowledge(handler, parsed)
+    if parsed.path == "/api/acervo/titles":
+        return _handle_acervo_titles(handler, parsed)
 
     if parsed.path == "/api/artifact/receipt":
         return _handle_artifact_receipt(handler, parsed)
@@ -9117,6 +9123,8 @@ def handle_post(handler, parsed) -> bool:
         return _handle_artifact_publish(handler, body)
     if parsed.path == "/api/acervo/status":
         return _handle_acervo_status(handler, body)
+    if parsed.path == "/api/acervo/stage-context":
+        return _handle_acervo_stage_context(handler, body)
 
     if parsed.path == "/api/file/create-dir":
         return _handle_create_dir(handler, body)
@@ -12154,6 +12162,258 @@ def _handle_acervo_status(handler, body):
             # Validator unavailable/erroring — the write already succeeded; don't block.
             pass
     return j(handler, {"ok": True, "status": new_status, "previous": old_status})
+
+
+def _acervo_root():
+    """Resolve the Exocortex acervo root, independent of the session workspace.
+
+    Order: $ACERVO → $EXOCORTEX_HOME/acervo → ~/exocortex/acervo → derived from
+    the acervo tool path. Microverse pages live outside the session workspace in
+    the general case, so cross-microverse browsing must resolve against this root
+    (never the session workspace). (MOD-008)
+    """
+    acervo = os.environ.get("ACERVO")
+    if acervo and Path(acervo).is_dir():
+        return Path(acervo)
+    exo = os.environ.get("EXOCORTEX_HOME")
+    if exo and (Path(exo) / "acervo").is_dir():
+        return Path(exo) / "acervo"
+    home = Path.home() / "exocortex" / "acervo"
+    if home.is_dir():
+        return home
+    tool = _acervo_tool_path("artifact_publish.py")
+    if tool is not None:
+        try:
+            return tool.parents[2]
+        except IndexError:
+            pass
+    return home
+
+
+def _humanize_slug(slug):
+    """Turn a slug/filename stem into a readable label (display layer only)."""
+    s = re.sub(r'[-_]+', ' ', str(slug or '')).strip()
+    return (s[:1].upper() + s[1:]) if s else str(slug)
+
+
+def _read_frontmatter_meta(path, keys):
+    """Best-effort extract of scalar frontmatter keys from a markdown/yaml head.
+
+    Reads only the ~4KB head. Returns {key: value} for keys present as top-level
+    ``key: value`` lines in the leading ``---`` block (or the head if no block).
+    """
+    out = {}
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            head = f.read(4096)
+    except OSError:
+        return out
+    m = re.match(r'^---\s*\n(.*?)\n---', head, re.DOTALL)
+    block = m.group(1) if m else head
+    for key in keys:
+        mm = re.search(r'^' + re.escape(key) + r':[ \t]*(.+?)[ \t]*$', block, re.MULTILINE)
+        if mm:
+            val = mm.group(1).strip().strip('"\'')
+            if val and val not in ("[]", "{}", "null", "~"):
+                out[key] = val
+    return out
+
+
+# Nature subdirectories of a microverse / global / shared layer (MOD-008).
+_ACERVO_NATURES = [
+    "context", "knowledge", "contracts", "workflows", "decisions",
+    "templates", "tools", "skills", "persona", "prompts", "reflections",
+]
+
+
+def _handle_acervo_microverses(handler, parsed):
+    """GET /api/acervo/microverses?session_id=...
+
+    List microverses under <acervo_root>/micro/ with friendly identity (from
+    _meta/index.md frontmatter → microverso.yaml → humanized slug) and per-Nature
+    .md counts. Read-only (MOD-008).
+    """
+    qs = parse_qs(parsed.query)
+    sid = qs.get("session_id", [""])[0]
+    if not sid:
+        return bad(handler, "session_id is required")
+    if not _resolve_session_workspace(sid):
+        return bad(handler, "Session not found", 404)
+    root = _acervo_root()
+    micro_dir = root / "micro"
+    out = []
+    if micro_dir.is_dir():
+        try:
+            children = sorted(micro_dir.iterdir(), key=lambda p: p.name)
+        except OSError:
+            children = []
+        for d in children:
+            if not d.is_dir() or d.name.startswith(("_", ".")):
+                continue
+            name = desc = mtype = None
+            idx = d / "_meta" / "index.md"
+            if idx.is_file():
+                meta = _read_frontmatter_meta(idx, ["title", "description", "excrtx_type", "type"])
+                name = meta.get("title"); desc = meta.get("description")
+                mtype = meta.get("excrtx_type") or meta.get("type")
+            if not name:
+                yml = d / "microverso.yaml"
+                if yml.is_file():
+                    ym = _read_frontmatter_meta(yml, ["name", "description", "type"])
+                    name = name or ym.get("name"); desc = desc or ym.get("description")
+                    mtype = mtype or ym.get("type")
+            if name:
+                # Strip "Índice —"/"Index —" markers (prefix or suffix) index pages carry.
+                name = re.sub(r'^(?:índice|indice|index)\s*[—\-:]\s*', '', name, flags=re.IGNORECASE)
+                name = re.sub(r'\s*[—\-:]\s*(?:índice|indice|index)$', '', name, flags=re.IGNORECASE)
+                name = name.strip()
+                if not name or name == d.name:
+                    name = _humanize_slug(d.name)
+            if not name:
+                name = _humanize_slug(d.name)
+            natures = {}
+            for nat in _ACERVO_NATURES:
+                nd = d / nat
+                if nd.is_dir():
+                    try:
+                        c = sum(1 for f in nd.iterdir() if f.is_file() and f.suffix.lower() == ".md")
+                    except OSError:
+                        c = 0
+                    if c:
+                        natures[nat] = c
+            out.append({"slug": d.name, "name": name, "description": desc,
+                        "type": mtype, "natures": natures})
+    return j(handler, {"microverses": out, "count": len(out)})
+
+
+def _handle_acervo_knowledge(handler, parsed):
+    """GET /api/acervo/knowledge?session_id=&scope=micro|global|shared&slug=&nature=
+
+    List knowledge/context pages (friendly titles + metadata) within a microverse
+    Nature, or a whole microverse when nature is omitted. Read-only (MOD-008).
+    """
+    qs = parse_qs(parsed.query)
+    sid = qs.get("session_id", [""])[0]
+    if not sid:
+        return bad(handler, "session_id is required")
+    if not _resolve_session_workspace(sid):
+        return bad(handler, "Session not found", 404)
+    scope = (qs.get("scope", ["micro"])[0] or "micro").strip()
+    slug = (qs.get("slug", [""])[0] or "").strip()
+    nature = (qs.get("nature", [""])[0] or "").strip()
+    root = _acervo_root()
+    if scope == "micro":
+        if not slug:
+            return bad(handler, "slug is required for scope=micro")
+        rel_base = "micro/" + slug
+    elif scope in ("global", "shared"):
+        rel_base = scope
+    else:
+        return bad(handler, "invalid scope")
+    try:
+        base = safe_resolve(root, rel_base)
+    except ValueError:
+        return bad(handler, "invalid path", 400)
+    natures = [nature] if nature else _ACERVO_NATURES
+    pages = []
+    for nat in natures:
+        nd = base / nat
+        if not nd.is_dir():
+            continue
+        try:
+            files = sorted(nd.iterdir(), key=lambda p: p.name)
+        except OSError:
+            continue
+        for f in files:
+            if not f.is_file() or f.suffix.lower() != ".md" or f.name.startswith("_"):
+                continue
+            meta = _read_frontmatter_meta(f, ["title", "description", "kind", "class",
+                                              "stability", "authority", "type"])
+            title = meta.get("title") or _read_frontmatter_title(f) or _humanize_slug(f.stem)
+            try:
+                rel = str(f.relative_to(root))
+            except ValueError:
+                rel = f.name
+            pages.append({
+                "rel_path": rel, "scope": scope, "slug": slug or scope, "nature": nat,
+                "title": title, "description": meta.get("description"),
+                "kind": meta.get("kind") or meta.get("type"), "class": meta.get("class"),
+                "stability": meta.get("stability"), "authority": meta.get("authority"),
+            })
+    return j(handler, {"pages": pages, "count": len(pages)})
+
+
+def _handle_acervo_titles(handler, parsed):
+    """GET /api/acervo/titles?session_id=&paths=a,b,c
+
+    Batch friendly-title assist for the Sessão view: maps each workspace-relative
+    .md path to its frontmatter/heading title (or null). Read-only (MOD-008).
+    """
+    qs = parse_qs(parsed.query)
+    sid = qs.get("session_id", [""])[0]
+    if not sid:
+        return bad(handler, "session_id is required")
+    workspace = _resolve_session_workspace(sid)
+    if not workspace:
+        return bad(handler, "Session not found", 404)
+    raw = qs.get("paths", [""])[0] or ""
+    titles = {}
+    for p in [x.strip() for x in raw.split(",") if x.strip()][:200]:
+        if not p.lower().endswith(".md"):
+            titles[p] = None
+            continue
+        try:
+            fp = safe_resolve(Path(workspace), p)
+        except ValueError:
+            titles[p] = None
+            continue
+        titles[p] = _read_frontmatter_title(fp) if fp.is_file() else None
+    return j(handler, {"titles": titles})
+
+
+def _handle_acervo_stage_context(handler, body):
+    """POST /api/acervo/stage-context {session_id, scope, slug, nature, rel_path|source}
+
+    Copy a chosen acervo page into the session's attachment dir and return an
+    attachment object ({name,path,mime,size,is_image}) for the chat composer, so
+    it rides along with the next message via the existing attachments pipeline.
+    Read-only on the acervo (copies out); same trust boundary as user uploads. (MOD-008)
+    """
+    import mimetypes as _mt
+    try:
+        require(body, "session_id")
+    except ValueError as e:
+        return bad(handler, str(e))
+    sid = body["session_id"]
+    try:
+        get_session_for_file_ops(sid)
+    except KeyError:
+        return bad(handler, "Session not found", 404)
+    source = (body.get("source") or body.get("rel_path") or "").strip()
+    if not source:
+        return bad(handler, "source or rel_path is required")
+    root = _acervo_root()
+    try:
+        src = safe_resolve(root, source)
+    except ValueError:
+        return bad(handler, "invalid source path", 400)
+    if not src.is_file():
+        return j(handler, {"error": "source not found"}, status=404)
+    try:
+        if src.stat().st_size > 5 * 1024 * 1024:
+            return j(handler, {"error": "file too large for context (max 5MB)"}, status=413)
+    except OSError:
+        return j(handler, {"error": "source not readable"}, status=500)
+    from api.upload import _upload_destination, _sanitize_upload_name
+    try:
+        dest = _upload_destination(sid, _sanitize_upload_name(src.name))
+        dest.write_bytes(src.read_bytes())
+    except (OSError, ValueError) as e:
+        return j(handler, {"error": "failed to stage file", "detail": str(e)}, status=500)
+    mime = _mt.guess_type(dest.name)[0] or "text/markdown"
+    return j(handler, {"name": dest.name, "path": str(dest),
+                       "size": dest.stat().st_size, "mime": mime,
+                       "is_image": mime.startswith("image/")})
 
 
 def _handle_artifact_zip(handler, parsed):
