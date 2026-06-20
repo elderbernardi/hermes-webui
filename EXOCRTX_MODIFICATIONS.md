@@ -61,6 +61,17 @@ As cinco modificações abaixo introduzem a skin `excrtx` e o rebranding Hermes 
 
 ---
 
+## Camada 2 — Funcionalidades Exocórtex
+
+### MOD-007: Aba "Acervo" — catálogo humano de artefatos + export Drive
+- **Arquivos:** `static/acervo.js` (novo), `api/routes.py` (handlers `_handle_acervo_artifacts` + `_handle_acervo_status` + dispatch `/api/acervo/artifacts` e `/api/acervo/status`), `static/index.html` (botão de aba + container `#workspaceAcervo` + include do script), `static/workspace.js` (caso `'acervo'` em `switchWorkspacePanelTab`), `static/style.css` (bloco `.acervo-*` + regras `data-active-tab="acervo"`).
+- **Tipo:** frontend + backend (read + status-write) + CSS.
+- **Propósito:** substituir a visão de árvore crua por um catálogo humano dos artefatos do Acervo. Lê o schema de `manifest.json` (`friendly_name`, `status`, `artifact_type`, `primary_microverso`, `task_id`, `evaluation`, `publication`, `provenance`) e renderiza: banda "Nesta sessão" (cruzando `collectSessionArtifacts()`), vistas Pipeline/Microverso/Tarefa/Galeria, cartões por nome amigável com pill de status e ícone de tipo, drawer de detalhe, e filtros de ruído (notas soltas e arquivados ocultos por padrão). Reusa `/api/artifact/zip` (#84) e `/api/artifact/publish` (#82) para baixar e publicar no Drive (Draft-First). `/api/acervo/status` muda o campo `status` do manifest (draft/ready/archived) validando com `validate_artifact_manifest.py` — promover/arquivar/restaurar; quarentena/purge destrutivos ficam com o `excrtx-memory-syndic`.
+- **Reaplicar se:** upstream reestruturar `switchWorkspacePanelTab`/as abas do painel direito, ou o dispatcher de rotas GET em `routes.py`.
+- **Conflito provável:** `static/index.html` — médio (bloco de abas e includes de script mudam no upstream). `static/workspace.js` — médio (a função de troca de aba). `api/routes.py`, `static/acervo.js`, `static/style.css` — baixo (aditivos). Registro COLLAB: `.harness/changes/2026-06-20_collab_hermes-webui-acervo-view.md` (umbrella).
+
+---
+
 ## Workflow de atualização (rebase)
 
 ```bash

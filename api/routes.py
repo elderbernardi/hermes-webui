@@ -7493,6 +7493,8 @@ def handle_get(handler, parsed) -> bool:
 
     if parsed.path == "/api/artifact/zip":
         return _handle_artifact_zip(handler, parsed)
+    if parsed.path == "/api/acervo/artifacts":
+        return _handle_acervo_artifacts(handler, parsed)
 
     if parsed.path == "/api/artifact/receipt":
         return _handle_artifact_receipt(handler, parsed)
@@ -9113,6 +9115,8 @@ def handle_post(handler, parsed) -> bool:
 
     if parsed.path == "/api/artifact/publish":
         return _handle_artifact_publish(handler, body)
+    if parsed.path == "/api/acervo/status":
+        return _handle_acervo_status(handler, body)
 
     if parsed.path == "/api/file/create-dir":
         return _handle_create_dir(handler, body)
@@ -11964,6 +11968,192 @@ def _handle_folder_download(handler, parsed):
         "folder-download: streamed %d/%d files (~%d bytes) from %s",
         written, len(files), total_bytes, target,
     )
+
+
+def _read_frontmatter_title(path):
+    """Best-effort human title for a loose markdown artifact (no manifest).
+
+    Prefers YAML frontmatter ``title:``, then the first ``# heading``. Returns
+    None when neither is present so the caller can fall back to the filename.
+    """
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            head = f.read(4096)
+    except OSError:
+        return None
+    m = re.search(r'^title:\s*(.+?)\s*$', head, re.MULTILINE)
+    if m:
+        return m.group(1).strip().strip('"\'') or None
+    m = re.search(r'^#\s+(.+?)\s*$', head, re.MULTILINE)
+    if m:
+        return m.group(1).strip() or None
+    return None
+
+
+def _normalize_artifact(data, art_id):
+    """Flatten a manifest.json into the flat shape the Acervo UI renders.
+
+    Defensive: every field has a fallback, so a partial/legacy manifest still
+    produces a usable card (additive contract — missing keys never error).
+    """
+    ev = data.get("evaluation") if isinstance(data.get("evaluation"), dict) else {}
+    pub_root = data.get("publication") if isinstance(data.get("publication"), dict) else {}
+    pub = pub_root.get("drive") if isinstance(pub_root.get("drive"), dict) else {}
+    prov = data.get("provenance") if isinstance(data.get("provenance"), dict) else {}
+    friendly = data.get("friendly_name") or data.get("title") or art_id
+    return {
+        "id": art_id,
+        "kind": "package",
+        "has_manifest": True,
+        "friendly_name": friendly,
+        "title": data.get("title") or friendly,
+        "status": data.get("status") or "unknown",
+        "artifact_type": data.get("artifact_type") or "document",
+        "source_type": data.get("source_type"),
+        "primary_microverso": data.get("primary_microverso"),
+        "related_microversos": data.get("related_microversos") or [],
+        "task_id": data.get("task_id"),
+        "scope": data.get("scope"),
+        "owner": data.get("owner") if isinstance(data.get("owner"), dict) else {},
+        "semantic_links": data.get("semantic_links") or [],
+        "source_path": data.get("source_path"),
+        "rel_path": "_artifacts/items/" + art_id + (
+            "/" + data["source_path"] if data.get("source_path") else ""),
+        "evaluation_status": ev.get("status"),
+        "evaluation_personas": ev.get("personas") or [],
+        "publication_status": pub.get("status"),
+        "publication_receipt": pub.get("receipt_path"),
+        "drive_link": pub.get("folder_link") or pub.get("web_view_link") or "",
+        "created_at": prov.get("created_at"),
+        "created_by": prov.get("created_by"),
+        "origin": prov.get("origin"),
+    }
+
+
+def _handle_acervo_artifacts(handler, parsed):
+    """GET /api/acervo/artifacts?session_id=...
+
+    Human-facing artifact catalog: full normalized manifests for every package
+    under <workspace>/_artifacts/items/, plus loose markdown notes in that
+    folder. Read-only; powers the Acervo tab (MOD-007). Newest first.
+    """
+    qs = parse_qs(parsed.query)
+    sid = qs.get("session_id", [""])[0]
+    if not sid:
+        return bad(handler, "session_id is required")
+    workspace = _resolve_session_workspace(sid)
+    if not workspace:
+        return bad(handler, "Session not found", 404)
+    try:
+        items_dir = safe_resolve(Path(workspace), "_artifacts/items")
+    except ValueError:
+        return j(handler, {"artifacts": [], "count": 0})
+    artifacts = []
+    if items_dir.is_dir():
+        try:
+            children = sorted(items_dir.iterdir(), key=lambda p: p.name, reverse=True)
+        except OSError:
+            children = []
+        for child in children:
+            try:
+                if child.is_dir():
+                    mf = child / "manifest.json"
+                    if mf.is_file():
+                        data = json.loads(mf.read_text(encoding="utf-8"))
+                        if isinstance(data, dict):
+                            artifacts.append(_normalize_artifact(data, child.name))
+                            continue
+                    # Package directory without a readable manifest — still surface it.
+                    artifacts.append({
+                        "id": child.name, "kind": "package", "has_manifest": False,
+                        "friendly_name": child.name, "title": child.name,
+                        "status": "unknown", "artifact_type": "folder",
+                        "primary_microverso": None, "task_id": None,
+                        "rel_path": "_artifacts/items/" + child.name,
+                    })
+                elif child.is_file() and child.suffix.lower() == ".md":
+                    title = _read_frontmatter_title(child) or child.stem
+                    artifacts.append({
+                        "id": child.name, "kind": "note", "has_manifest": False,
+                        "friendly_name": title, "title": title,
+                        "status": "loose", "artifact_type": "note",
+                        "primary_microverso": None, "task_id": None,
+                        "rel_path": "_artifacts/items/" + child.name,
+                    })
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+    return j(handler, {"artifacts": artifacts, "count": len(artifacts)})
+
+
+# UI-permitted manifest status transitions. Excludes 'published' (goes through
+# the Drive publish flow) and agent-driven states (approved/ask-publication/failed).
+_ACERVO_UI_STATUSES = {"draft", "ready", "archived"}
+
+
+def _handle_acervo_status(handler, body):
+    """POST /api/acervo/status {session_id, artifact_id, status}
+
+    Set a package's manifest ``status`` to a UI-permitted value (draft / ready /
+    archived), then validate the manifest with the canonical
+    validate_artifact_manifest.py. On validation error the change is reverted.
+    Non-destructive: only the owned ``status`` field is edited (MOD-007). #82
+    """
+    try:
+        require(body, "session_id", "artifact_id", "status")
+    except ValueError as e:
+        return bad(handler, str(e))
+    new_status = str(body.get("status") or "").strip()
+    if new_status not in _ACERVO_UI_STATUSES:
+        return bad(handler, "status must be one of: " + ", ".join(sorted(_ACERVO_UI_STATUSES)))
+    try:
+        s = get_session_for_file_ops(body["session_id"])
+    except KeyError:
+        return bad(handler, "Session not found", 404)
+    artifact_dir = _artifact_dir_for(s, body.get("artifact_id"))
+    if artifact_dir is None:
+        return bad(handler, "invalid artifact id", 400)
+    mf = artifact_dir / "manifest.json"
+    if not mf.is_file():
+        return j(handler, {"error": "artifact has no manifest"}, status=404)
+    try:
+        data = json.loads(mf.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        return j(handler, {"error": "unreadable manifest", "detail": str(e)}, status=500)
+    if not isinstance(data, dict):
+        return j(handler, {"error": "malformed manifest"}, status=500)
+    old_status = data.get("status")
+    if old_status == new_status:
+        return j(handler, {"ok": True, "status": new_status, "unchanged": True})
+    data["status"] = new_status
+    try:
+        mf.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    except OSError as e:
+        return j(handler, {"error": "failed to write manifest", "detail": str(e)}, status=500)
+
+    # Validate with the canonical tool; revert on hard error (warnings are OK).
+    tool = _acervo_tool_path("harness/validate_artifact_manifest.py")
+    if tool is not None:
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(tool), str(artifact_dir), "--json"],
+                capture_output=True, text=True, timeout=60,
+            )
+            report = json.loads(proc.stdout) if proc.stdout.strip() else []
+            errors = []
+            for r in (report or []):
+                if isinstance(r, dict) and not r.get("ok"):
+                    errors.extend(r.get("errors") or [])
+            if errors:
+                data["status"] = old_status
+                try:
+                    mf.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                except OSError:
+                    pass
+                return j(handler, {"error": "invalid after status change", "errors": errors}, status=400)
+        except (subprocess.TimeoutExpired, ValueError, json.JSONDecodeError, OSError):
+            # Validator unavailable/erroring — the write already succeeded; don't block.
+            pass
+    return j(handler, {"ok": True, "status": new_status, "previous": old_status})
 
 
 def _handle_artifact_zip(handler, parsed):
