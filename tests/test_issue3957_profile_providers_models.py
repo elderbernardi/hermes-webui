@@ -854,3 +854,43 @@ def test_detached_worker_scope_scrubs_non_registry_agent_creds(monkeypatch, tmp_
     assert os.environ.get("AZURE_CLIENT_SECRET") == "process-default-azure-secret"
     assert os.environ.get("AZURE_FOUNDRY_API_KEY") == "process-default-foundry-key"
 
+
+def test_expand_env_vars_does_not_leak_process_env_under_block_scope(monkeypatch):
+    """Config ${VAR} expansion must not reconstruct a server-process credential
+    for a profile-scoped readonly/background read (#3961 config-template vector).
+
+    A profile config.yaml of e.g. `api_key: ${ANTHROPIC_TOKEN}` previously
+    expanded via raw os.environ in _expand_env_vars, so _get_provider_api_key
+    could rebuild the process token and pass it through even when the scrub
+    stripped the child env. The expansion now routes through the thread-local
+    accessor and refuses the process-env fallback when block_process_env_fallback
+    is set."""
+    monkeypatch.setenv("ANTHROPIC_TOKEN", "process-default-anthropic-token")
+
+    # No active scope: normal behavior — expands from the process env.
+    assert config._expand_env_vars({"api_key": "${ANTHROPIC_TOKEN}"}) == {
+        "api_key": "process-default-anthropic-token"
+    }
+
+    # Profile-scoped readonly/background scope with no profile value for the var:
+    # must NOT fall back to the process env (leaves the reference unexpanded).
+    prev_block = getattr(config._thread_ctx, "block_process_env_fallback", False)
+    prev_env = getattr(config._thread_ctx, "env", None)
+    config._thread_ctx.block_process_env_fallback = True
+    config._thread_ctx.env = {}
+    try:
+        assert config._expand_env_vars({"api_key": "${ANTHROPIC_TOKEN}"}) == {
+            "api_key": "${ANTHROPIC_TOKEN}"
+        }
+        # A value present in the profile's thread-local env IS used (own value).
+        config._thread_ctx.env = {"ANTHROPIC_TOKEN": "profile-own-token"}
+        assert config._expand_env_vars({"api_key": "${ANTHROPIC_TOKEN}"}) == {
+            "api_key": "profile-own-token"
+        }
+    finally:
+        config._thread_ctx.block_process_env_fallback = prev_block
+        if prev_env is None:
+            config._thread_ctx.env = {}
+        else:
+            config._thread_ctx.env = prev_env
+

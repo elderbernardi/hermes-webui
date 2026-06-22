@@ -254,9 +254,22 @@ else:
 # ── Config file (reloadable -- supports profile switching) ──────────────────
 
 def _expand_env_vars(obj):
-    """Recursively expand ${VAR} references in config values using os.environ."""
+    """Recursively expand ${VAR} references in config values.
+
+    Uses the thread-local-first profile env lookup (_thread_local_env_value) so a
+    ${VAR} reference in a profile's config.yaml resolves to that profile's value,
+    and — critically — does NOT fall back to the server process os.environ when a
+    profile-scoped readonly/background scope set block_process_env_fallback. The
+    raw (unexpanded) dict is what gets cached; this expansion re-runs on every
+    read against the current thread's scope, so a cross-profile credential
+    (e.g. config api_key: ${ANTHROPIC_TOKEN}) can't be reconstructed from the
+    server process env for a named profile that has no such value (#3961)."""
     if isinstance(obj, str):
-        return re.sub(r"\${([^}]+)}", lambda m: os.environ.get(m.group(1), m.group(0)), obj)
+        return re.sub(
+            r"\${([^}]+)}",
+            lambda m: _thread_local_env_value(m.group(1), m.group(0)),
+            obj,
+        )
     if isinstance(obj, dict):
         return {k: _expand_env_vars(v) for k, v in obj.items()}
     if isinstance(obj, list):
