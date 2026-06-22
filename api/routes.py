@@ -6691,7 +6691,14 @@ def handle_get(handler, parsed) -> bool:
         return j(handler, get_available_models())
 
     if parsed.path == "/api/models/live":
-        return _handle_live_models(handler, parsed)
+        # Mirror the active per-request profile env (#3957/#3961) so live model
+        # discovery resolves the request profile's credentials, not the process
+        # default. provider_model_ids() delegates into agent helpers that read
+        # process env / HERMES_HOME directly, so the mirrored (non-readonly)
+        # request scope is required here. No-op for the default profile.
+        from api.profiles import profile_env_for_active_request
+        with profile_env_for_active_request("/api/models/live", logger_override=logger):
+            return _handle_live_models(handler, parsed)
 
     # ── Auxiliary models (GET/POST) ──
     if parsed.path == "/api/model/auxiliary":
@@ -6720,8 +6727,8 @@ def handle_get(handler, parsed) -> bool:
         # profile's (#3957). Without this, get_auth_status() probes on a
         # non-default profile resolve the wrong/empty creds and can stall past
         # the 30s frontend timeout. No-op for the default profile.
-        from api.profiles import profile_env_for_active_request
-        with profile_env_for_active_request("/api/providers", logger_override=logger):
+        from api.profiles import profile_env_for_active_request_readonly
+        with profile_env_for_active_request_readonly("/api/providers", logger_override=logger):
             return j(handler, get_providers())
 
     # ── Plugins/hooks visibility (read-only, no callback/source internals) ──
@@ -6731,7 +6738,15 @@ def handle_get(handler, parsed) -> bool:
         query = parse_qs(parsed.query)
         provider_id = (query.get("provider", [""])[0] or None)
         refresh = (query.get("refresh", [""])[0] or "").strip().lower() in {"1", "true", "yes", "on"}
-        return j(handler, get_provider_quota(provider_id, refresh=refresh))
+        # Bind the active request's profile env (matches /api/providers and
+        # /api/models/live). #4365 added a credential_pool.load_pool() path in
+        # get_provider_quota for all pooled providers; without this wrapper that
+        # read/write runs under the process-default profile, so a multi-profile
+        # client would see (and seed) the default profile's pool instead of its
+        # own (#4247/#4067 profile-isolation class).
+        from api.profiles import profile_env_for_active_request_readonly
+        with profile_env_for_active_request_readonly("/api/provider/quota", logger_override=logger):
+            return j(handler, get_provider_quota(provider_id, refresh=refresh))
 
     if parsed.path == "/api/provider/cost-history":
         query = parse_qs(parsed.query)
