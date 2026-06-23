@@ -5741,6 +5741,18 @@ def _run_agent_streaming(
             _metering_output_deltas = [0]
             _metering_reasoning_deltas = [0]
 
+            def _flush_reasoning_buffer():
+                # #4729: emit any coalesced-but-not-yet-flushed reasoning text immediately.
+                # The ~10 Hz throttle in on_reasoning leaves a sub-100ms tail in the buffer;
+                # the agent never calls reasoning_callback(None), and reasoning can transition
+                # to tool calls / visible output, so we must flush at every boundary that
+                # closes or reorders the live reasoning stream — otherwise the tail is
+                # silently lost from the live Thinking view (the frontend appends deltas).
+                if _reasoning_buffer[0]:
+                    put('reasoning', {'text': _reasoning_buffer[0]})
+                    _reasoning_buffer[0] = ''
+
+
             def _emit_metering():
                 now = time.monotonic()
                 if now - _metering_last_emit[0] < 0.1:
@@ -5769,6 +5781,9 @@ def _run_agent_streaming(
                 nonlocal _token_sent
                 if text is None:
                     return  # end-of-stream sentinel
+                # #4729: visible output is starting — flush any buffered reasoning tail
+                # first so the live Thinking stream is complete before/at the transition.
+                _flush_reasoning_buffer()
                 _token_sent = True
                 # Accumulate partial text so cancel_stream() can persist it (#893)
                 if stream_id in STREAM_PARTIAL_TEXT:
@@ -5786,9 +5801,7 @@ def _run_agent_streaming(
                 if text is None:
                     # Flush any remaining coalesced reasoning buffer so the last
                     # partial window is not lost when the reasoning phase ends.
-                    if _reasoning_buffer[0]:
-                        put('reasoning', {'text': _reasoning_buffer[0]})
-                        _reasoning_buffer[0] = ''
+                    _flush_reasoning_buffer()
                     return
                 _tool_boundary_advanced = False
                 reasoning_delta = str(text)
@@ -5891,6 +5904,9 @@ def _run_agent_streaming(
 
             def on_tool(*cb_args, **cb_kwargs):
                 nonlocal _reasoning_segments, _current_reasoning_idx, _tool_boundary_advanced
+                # #4729: a tool boundary closes/reorders the live reasoning stream — flush
+                # any buffered reasoning tail first so it isn't stranded behind the tool event.
+                _flush_reasoning_buffer()
                 event_type = None
                 name = None
                 preview = None
@@ -6736,6 +6752,11 @@ def _run_agent_streaming(
                 task_id=session_id,
                 persist_user_message=msg_text,
             )
+            # #4729: the run is done — flush any reasoning tail still in the coalescing
+            # buffer (the agent never calls reasoning_callback(None), and a turn can end on
+            # reasoning with no trailing token/tool boundary to trigger a flush) so the last
+            # sub-100ms window reaches the live Thinking view before the terminal done event.
+            _flush_reasoning_buffer()
             if cancel_event.is_set():
                 if _checkpoint_stop is not None:
                     _checkpoint_stop.set()
