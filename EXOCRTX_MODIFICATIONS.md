@@ -155,3 +155,21 @@ Snapshot da divergência com `nesquena/hermes-webui`:
 4. **Não** tentar `git rebase upstream/master` integral nesta janela — o custo/risco em `routes.py` não compensa.
 5. Após estabilizar, atualizar a linha "Base atual" e registrar no change-log da umbrella se algum item tocar contrato/superfície compartilhada.
 
+### Resultado da Fase 1 — executado 2026-06-23 (branch `chore/upstream-sync-2026q2`)
+
+Cherry-pick faseado, item a item, validado por testes. Resumo:
+
+| Item de segurança | Resultado | Commits aplicados |
+|---|---|---|
+| **SSE reasoning throttle — corrige congelamento de aba (#4729)** | ✅ Aplicado | `eabe1426` (-m1) → `fa51e341` → `8f5ffea4`. Teste `test_issue4729_reasoning_sse_coalesce.py` 5/5. |
+| **Vazamento de credenciais entre perfis (#3961/#4544)** | ✅ Aplicado | merge `239529f9` (-m1, 9 conflitos resolvidos p/ a versão endurecida) + follow-ups `1293f030` `4eb069be` `bf548a25` `51dd69b4` `d60ad140`. Teste `test_issue3957_profile_providers_models.py` 33/33. |
+| Wiki path-traversal (#4375/#4581 wiki) | ⏭️ N/A | Os endpoints `/api/wiki/browse` e `/api/wiki/page` (feature #2941 `4e5eebd0`) **não existem** na base do fork — só `/api/wiki/status`. A vuln não está presente. |
+| Isolated-profile hardening (#4589/#4620) | ⏭️ N/A | A feature isolated-HERMES_HOME mode (#2698, `963f7c38`/`36dbe1a4`) é **pós-base** e não está no fork; `HERMES_WEBUI_ISOLATED_PROFILE` inexistente. |
+| Symlink target-disclosure (#4581 workspace) | ⏭️ Deferido | Entrelaçado com a feature symlink-display do upstream (#4226) + i18n MOD-006 (13 blocos em `i18n.js`, HEAD vazio em `ui.js` → risco de handler duplicado). Severidade moderada — navegação/leitura já bloqueada por `safe_resolve_ws`. Reavaliar junto com #4226. |
+
+**Adaptação do fork (necessária):** o fix #3961 espera `/api/models/live` envolvido em `profile_env_for_active_request(...)`; o fork extraiu esse handler em `_handle_live_models()`, então o wrapper foi aplicado manualmente na chamada em `routes.py` (mantém paridade com o guard estrutural do teste). `/api/providers` e `/api/provider/quota` ficaram cobertos pelo próprio change set.
+
+**Regressão:** suíte completa **9036 passaram / 17 falharam**. As 17 falhas foram trianguladas como **pré-existentes** (não causadas pelos cherry-picks): testes de cobertura de locales (i18n MOD-006), skins/tema default (catppuccin/sienna/verdigris — MOD-001/003/005), `sprint33` confirm nativo, e `issue1426` openrouter (falha idêntica em `exocortex/stable`); mais 4 flakes de ordenação da suíte (`issue3957` ×2 e `pr1970_lmstudio` ×2) que **passam isolados**. Diff acumulado: `api/{config,profiles,providers,routes,streaming}.py` (+837/−45, fora testes); `routes.py` apenas +23 linhas — handlers do Acervo intactos.
+
+> **Pendente de promoção:** branch ainda não mergeada em `exocortex/stable` nem reiniciada em produção. Atualizar "Base atual" só após o merge.
+
