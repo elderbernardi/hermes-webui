@@ -6,7 +6,7 @@ Cada entrada documenta arquivo, propósito e risco de conflito para guiar o reba
 
 - **Fork:** `elderbernardi/hermes-webui`
 - **Branch de produção:** `exocortex/stable` (roda na porta 8787)
-- **Base atual:** upstream `v0.51.440` (Release PA, commit `e47f685b`)
+- **Base atual (merge-base real):** upstream `v0.51.448` (Release PI, commit `32458c44`) — auditado 2026-06-23. A skin/rebrand (Camada 1) foi originalmente aplicada sobre `v0.51.440`, mas o branch já incorporou merges do upstream até v0.51.448.
 - **Política:** todas as modificações vivem no fork — sem PRs upstream (divergência arquitetural elevada).
 
 > Convenção de commit: cada modificação carrega a tag `[MOD-NNN]` no assunto para rastreio no `git log`.
@@ -91,3 +91,67 @@ git rebase upstream/master
 
 O comando `./ctl.sh update` (v1) automatiza apenas: fetch + diff stat + confirmação.
 Rebase, testes e restart permanecem manuais nesta versão.
+
+---
+
+## Status de Upstream — auditoria 2026-06-23
+
+Snapshot da divergência com `nesquena/hermes-webui`:
+
+- **Atraso:** `exocortex/stable` está **18 commits à frente / 607 commits atrás** de `upstream/master`.
+- **Faixa de releases:** base `v0.51.448` → upstream `v0.51.607` (**159 patch releases**, ~5 meses).
+- **Volume:** ~312 arquivos alterados (+48,9k / −2,6k linhas).
+- **Risco central:** `api/routes.py` mudou em **89 commits (+3.427 linhas)** — exatamente onde vivem os handlers do Acervo (`_handle_acervo_*`). Um `git rebase upstream/master` integral conflita pesado e provavelmente quebra MOD-007/008. **Recomendado: cherry-pick faseado, não rebase completo.**
+
+### Cherry-pick priorizado (alto valor, baixo conflito)
+
+**Fase 1 — Segurança + estabilidade (puxar primeiro):**
+
+| Item | Refs | Impacto | Conflito |
+|---|---|---|---|
+| Vazamento de credenciais entre perfis | `c55ba5df`, `239529f9`, `1293f030`, `51dd69b4`, `4eb069be`, `bf548a25`, `d60ad140` (#3961/#4544) | 🔴 Segurança crítica | Médio (`profiles.py`, `config.py`, `gateway_chat.py`) |
+| Hardening de isolated-profile (2ª porta de escape) | `f7e144d5`, `fba80e69`, `cb7efedc`, `17eb82f0` (#4589/#4620) | 🔴 Segurança | Baixo (se não usa isolated-mode) |
+| Hardening wiki/symlink (não vazar path-alvo, rejeitar hardlink) | `077de545`, `0fe707b2`, `22bfed43` (#4375/#4581) | 🟠 Segurança | Baixo |
+| Throttle do SSE de reasoning (corrige **congelamento da aba**) | `eabe1426`, `8f5ffea4`, `fa51e341` (#4729) | 🟠 UX crítico | Baixo (isolado em `streaming.py`) |
+
+**Fase 2 — Performance + polish:**
+
+| Item | Refs | Impacto | Conflito |
+|---|---|---|---|
+| Cache do app-shell template | `c6994b50`, `7c9fef2f` (#4774) | 🟢 Perf | Baixo |
+| Hot-path caching de backend (fases 2+3) | `f9a687d0`, `8006db22`, `4f071895` (#4662) | 🟢 Perf | Baixo-médio (`config.py`) |
+| Footer jitter no virtual-scroll | `028fb61f`, `8b74045b` (#4346) | 🟡 Suavidade | Baixo (`style.css`, `ui.js`) |
+| TLS handshake não trava o accept loop | `a43a9365` (#4727) | 🟡 Estabilidade | Baixo |
+| Scroll de live-stream + sessão mobile | `d6133458` (PR #4785: #4778/#4777/#4780) | 🟠 UX live-mode | Médio-alto (sidebar/worklog) |
+
+**Fase 3 — Avaliar antes (features novas, dependem de conferir compatibilidade com o Acervo):**
+
+| Item | Refs | Nota |
+|---|---|---|
+| Kanban de tarefas + dependências | `947b770a` (#3797) | Código majoritariamente novo; checar sobreposição com a view "Tarefa" do Acervo |
+| Wiki LLM (read-only) no painel Insights | `4e5eebd0` (#2941) | Conflito médio em `panels.js` |
+| Skeletons de profile-switch | `b084535b`, `12180079` (#4671/#4717) | Conflito médio em `ui.js`/`workspace.js` |
+| Symlinks na árvore de workspace | `53adcfc3` (#4226) | Baixo; vem com hardening |
+| Atalho Ctrl/Cmd+, para Settings | `8c68bc6b` (#4391) | Trivial |
+
+### Conflito esperado (arquivos customizados pelo fork × mudanças upstream)
+
+| Arquivo | Commits upstream | Risco | Razão |
+|---|---|---|---|
+| `api/routes.py` | 89 (+3427) | 🔴 Crítico | Handlers do Acervo + dispatcher de rotas |
+| `static/style.css` | 39 (+451) | 🟠 Alto | Bloco `.acervo-*` aditivo no fim colide com novas regras |
+| `static/ui.js` | +2256 | 🟠 Alto | `renderStagedContextChips` (MOD-008) × refactors de scroll |
+| `static/panels.js` | +1458 | 🟠 Alto | Painel workspace × novos painéis (Wiki/Kanban) |
+| `static/index.html` | 17 (+143) | 🟡 Médio | Régua de abas, rail, includes (MOD-003/007/008) |
+| `static/sessions.js` | +835 | 🟡 Médio | `_refreshActiveWorkspaceTab` (MOD-008) × filtro de fonte |
+| `static/workspace.js` | 6 (+113) | 🟡 Médio | `switchWorkspacePanelTab`, `renderSessionArtifacts` (MOD-007/008) |
+| `api/config.py` | +823 | 🟡 Médio | MOD-001 (skin) × caching de config |
+
+### Estratégia recomendada
+
+1. Branch de trabalho a partir de `exocortex/stable` (ex.: `chore/upstream-sync-2026q2`).
+2. `git cherry-pick` da **Fase 1** item a item, resolvendo conflito guiado pela tabela de MODs acima; rodar `npm run lint:runtime` + smoke-test do servidor a cada item.
+3. **Fase 2** idem.
+4. **Não** tentar `git rebase upstream/master` integral nesta janela — o custo/risco em `routes.py` não compensa.
+5. Após estabilizar, atualizar a linha "Base atual" e registrar no change-log da umbrella se algum item tocar contrato/superfície compartilhada.
+
