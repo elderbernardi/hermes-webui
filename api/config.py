@@ -424,12 +424,39 @@ def reload_config() -> None:
         _cfg_path = config_path
         _cfg_mtime = 0.0
         try:
-            import yaml as _yaml
-
             if config_path.exists():
-                loaded = _yaml.safe_load(config_path.read_text(encoding="utf-8"))
-                if isinstance(loaded, dict):
-                    _cfg_cache.update(_expand_env_vars(loaded))
+                # Route the parse through the mtime-keyed cache (#4652) so an
+                # unchanged config.yaml isn't re-parsed (~125ms+ on a large file)
+                # on every reload_config() on the hot path (profile switch /
+                # load_settings, #4662 Phase 2). We take the RAW cached dict and
+                # run the env expansion HERE, pinned to the unscoped process-env
+                # view (below) — never the helper's per-call expansion — for the
+                # #798 TLS reason documented in the pin block.
+                loaded = _load_yaml_config_file_raw(config_path)
+                if isinstance(loaded, dict) and loaded:
+                    # The process-global _cfg_cache must reflect PROCESS-env
+                    # expansion, never a profile-scoped block_process_env_fallback
+                    # view — otherwise a reload that fires while a readonly/worker
+                    # scope is active (profile alternation resolves _get_config_path
+                    # to the named profile, #798 TLS) would bake under-expanded
+                    # literal ${VAR}s into the shared cache and starve concurrent
+                    # readers of the module-level `cfg` alias. Expansion re-runs
+                    # per-read elsewhere; here we pin the cache to the unscoped view.
+                    _prev_block = getattr(_thread_ctx, "block_process_env_fallback", False)
+                    _prev_env = getattr(_thread_ctx, "env", None)
+                    try:
+                        _thread_ctx.block_process_env_fallback = False
+                        _thread_ctx.env = {}
+                        _cfg_cache.update(_expand_env_vars(loaded))
+                    finally:
+                        _thread_ctx.block_process_env_fallback = _prev_block
+                        if _prev_env is None:
+                            try:
+                                del _thread_ctx.env
+                            except AttributeError:
+                                pass
+                        else:
+                            _thread_ctx.env = _prev_env
                     try:
                         _cfg_mtime = Path(config_path).stat().st_mtime
                     except OSError:
@@ -447,20 +474,70 @@ def reload_config() -> None:
             _delete_models_cache_on_disk()
 
 
-def _load_yaml_config_file(config_path: Path) -> dict:
+# Memoized parse cache for _load_yaml_config_file, keyed on (resolved path,
+# st_mtime_ns, st_size). yaml.safe_load on an ~800-line / 24KB config.yaml costs
+# ~125ms of pure-Python parsing, and hot read paths (e.g. GET /api/reasoning ->
+# get_reasoning_status) call this on every request. Without a cache, a UI sync
+# storm turns into a YAML-reparse storm (#4650). We cache the RAW parsed dict and
+# re-run _expand_env_vars() on every call: env expansion is cheap, always returns
+# a fresh structure (so callers that read-modify-save the result never corrupt the
+# cache), and keeps ${VAR} references live against the current os.environ. The
+# (mtime_ns, size) key means any on-disk edit (including by _save_yaml_config_file)
+# is picked up on the next read.
+_yaml_file_cache: dict[str, tuple] = {}
+_yaml_file_cache_lock = threading.Lock()
+
+
+def _load_yaml_config_file_raw(config_path: Path) -> dict:
+    """Return the RAW (un-env-expanded) parsed config dict, memoized on
+    (resolved path, st_mtime_ns, st_size). Shared parse core for
+    _load_yaml_config_file() and reload_config(): the former runs the helper's
+    own per-call env expansion on the result; the latter must run expansion
+    under its own process-env-pinned thread context (#798), so it takes the raw
+    dict and expands it itself. Either way the file is parsed at most once per
+    (mtime, size) — a UI sync storm can't turn into a YAML-reparse storm (#4650),
+    and an unchanged config.yaml isn't reparsed on the profile-switch hot path
+    (#4662 Phase 2).
+    """
     try:
         import yaml as _yaml
     except ImportError:
         return {}
 
-    if not config_path.exists():
+    try:
+        st = config_path.stat()
+    except OSError:
+        # Missing or unstattable file — preserve the original "no config" contract.
         return {}
+
+    cache_key = str(config_path)
+    stat_key = (st.st_mtime_ns, st.st_size)
+    with _yaml_file_cache_lock:
+        cached = _yaml_file_cache.get(cache_key)
+        if cached is not None and cached[0] == stat_key:
+            raw = cached[1]
+            return raw if isinstance(raw, dict) else {}
+
+    # Cache miss / stale: parse off disk. Done outside the lock so a slow parse
+    # doesn't serialize unrelated paths; a concurrent duplicate parse is harmless.
     try:
         loaded = _yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        return _expand_env_vars(loaded) if isinstance(loaded, dict) else {}
     except Exception:
         logger.debug("Failed to parse yaml config from %s", config_path)
         return {}
+
+    raw = loaded if isinstance(loaded, dict) else {}
+    with _yaml_file_cache_lock:
+        _yaml_file_cache[cache_key] = (stat_key, raw)
+    return raw
+
+
+def _load_yaml_config_file(config_path: Path) -> dict:
+    raw = _load_yaml_config_file_raw(config_path)
+    if not raw:
+        return {}
+    expanded = _expand_env_vars(raw)
+    return expanded if isinstance(expanded, dict) else {}
 
 
 def get_config_for_profile_home(profile_home: "Path | str | None") -> dict:
