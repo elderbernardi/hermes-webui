@@ -20,7 +20,7 @@ function _acL(pt, en){
 }
 
 const _AC_STATUS = {
-  draft:             {color:'#8f8a91', label:()=>_acL('Rascunho','Draft')},
+  draft:             {color:'#6c6770', label:()=>_acL('Rascunho','Draft')},
   ready:             {color:'#1376ed', label:()=>_acL('Pronto','Ready')},
   approved:          {color:'#0ea5e9', label:()=>_acL('Aprovado','Approved')},
   'ask-publication': {color:'#f59e0b', label:()=>_acL('Aguarda publicação','Awaiting publish')},
@@ -28,11 +28,11 @@ const _AC_STATUS = {
   pending:           {color:'#f59e0b', label:()=>_acL('Pendente','Pending')},
   initialized:       {color:'#f59e0b', label:()=>_acL('Iniciado','Initialized')},
   extracted:         {color:'#a855f7', label:()=>_acL('Extraído','Extracted')},
-  moved:             {color:'#8f8a91', label:()=>_acL('Movido','Moved')},
-  archived:          {color:'#a8a4ad', label:()=>_acL('Arquivado','Archived')},
+  moved:             {color:'#6c6770', label:()=>_acL('Movido','Moved')},
+  archived:          {color:'#78747e', label:()=>_acL('Arquivado','Archived')},
   failed:            {color:'#ef4444', label:()=>_acL('Falhou','Failed')},
-  loose:             {color:'#8f8a91', label:()=>_acL('Nota','Note')},
-  unknown:           {color:'#8f8a91', label:()=>_acL('—','—')},
+  loose:             {color:'#6c6770', label:()=>_acL('Nota','Note')},
+  unknown:           {color:'#6c6770', label:()=>_acL('—','—')},
 };
 function _acStatus(s){ return _AC_STATUS[s] || _AC_STATUS.unknown; }
 
@@ -108,12 +108,12 @@ function _acRenderCatalog(root){
     {k:'gallery',    l:_acL('Galeria','Gallery')},
   ];
   const chips = views.map(v =>
-    `<button type="button" class="acervo-chip${_acervoView===v.k?' active':''}" onclick="setAcervoView('${v.k}')">${esc(v.l)}</button>`
+    `<button type="button" role="tab" aria-selected="${_acervoView===v.k?'true':'false'}" class="acervo-chip${_acervoView===v.k?' active':''}" onclick="setAcervoView('${v.k}')">${esc(v.l)}</button>`
   ).join('');
   // Cross-microverse knowledge browser is a distinct mode (not artifact-based).
   if(_acervoView === 'microverses'){
     root.innerHTML = `<div class="acervo-toolbar">
-      <div class="acervo-views">${chips}</div>
+      <div class="acervo-views" role="tablist" aria-label="Acervo views">${chips}</div>
       <div class="acervo-tools"><button type="button" class="acervo-icon-btn" title="${esc(_acL('Atualizar','Refresh'))}" onclick="acervoRefreshMicroverses()">⟳</button></div>
     </div><div class="acervo-body" id="acMvBody"></div>`;
     _acRenderMicroversesInto(document.getElementById('acMvBody'));
@@ -129,7 +129,7 @@ function _acRenderCatalog(root){
     (noteCount ? `<button type="button" class="acervo-toggle${_acervoShowNotes?' on':''}" onclick="acervoToggleNotes()">${esc(_acL('Notas','Notes'))} ${noteCount}</button>` : '') +
     (archivedCount ? `<button type="button" class="acervo-toggle${_acervoShowArchived?' on':''}" onclick="acervoToggleArchived()">${esc(_acL('Arquivados','Archived'))} ${archivedCount}</button>` : '');
   let html = `<div class="acervo-toolbar">
-    <div class="acervo-views">${chips}</div>
+    <div class="acervo-views" role="tablist" aria-label="Acervo views">${chips}</div>
     <div class="acervo-tools">
       ${toggles}
       <span class="acervo-count">${filtered.length}</span>
@@ -148,10 +148,13 @@ function _acRenderCatalog(root){
         <div class="acervo-grid">${worked.map(a=>_acCard(a, sessionIds)).join('')}</div>
       </div>`;
     }
-    if(!filtered.length){
+    // The main catalog excludes items already surfaced in the band above, so a
+    // session artifact is never shown twice in the narrow panel (#acervo-ux).
+    const rest = worked.length ? filtered.filter(a => !sessionIds.has(a.id)) : filtered;
+    if(rest.length){
+      html += _acViewBody(rest, sessionIds);
+    }else if(!worked.length){
       html += '<div class="acervo-empty">'+esc(_acL('Nada para mostrar com os filtros atuais.','Nothing to show with the current filters.'))+'</div>';
-    }else{
-      html += _acViewBody(filtered, sessionIds);
     }
   }
   html += '</div>';
@@ -161,8 +164,9 @@ function _acRenderCatalog(root){
 function _acViewBody(data, sessionIds){
   if(_acervoView === 'pipeline') return _acRenderPipeline(data, sessionIds);
   if(_acervoView === 'gallery')  return _acRenderGallery(data, sessionIds);
-  // 'task' (default): group by originating task.
-  return _acRenderGroups(data, sessionIds, a => a.task_id || _acL('Sem tarefa','No task'));
+  // 'task' (default): group by originating task. Prefix the raw id so the
+  // header reads as a label, not a bare slug (#acervo-ux).
+  return _acRenderGroups(data, sessionIds, a => a.task_id ? _acL('Tarefa ','Task ')+a.task_id : _acL('Sem tarefa','No task'));
 }
 
 function _acRenderPipeline(data, sessionIds){
@@ -176,10 +180,13 @@ function _acRenderPipeline(data, sessionIds){
     });
     return {lane, items};
   });
-  return '<div class="acervo-lanes">'+lanes.map(({lane,items}) =>
+  // Vertically stacked: drop empty status sections so they don't waste space.
+  const shown = lanes.filter(({items}) => items.length);
+  if(!shown.length) return '';
+  return '<div class="acervo-lanes">'+shown.map(({lane,items}) =>
     `<div class="acervo-lane">
        <div class="acervo-lane-head">${esc(lane.label())} <span class="acervo-count">${items.length}</span></div>
-       <div class="acervo-lane-body">${items.length?items.map(a=>_acCard(a,sessionIds)).join(''):'<div class="acervo-lane-empty">—</div>'}</div>
+       <div class="acervo-lane-body">${items.map(a=>_acCard(a,sessionIds)).join('')}</div>
      </div>`
   ).join('')+'</div>';
 }

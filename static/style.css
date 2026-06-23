@@ -5990,18 +5990,19 @@ html[data-conversation-outline="enabled"] #outlineToggleBtn:not([hidden]){displa
 .rightpanel[data-active-tab="acervo"] .workspace-acervo{display:block;}
 .rightpanel:not([data-active-tab="acervo"]) .workspace-acervo{display:none!important;}
 
-.acervo-empty{padding:28px 16px;text-align:center;color:var(--muted);font-size:12px;line-height:1.6;}
-.acervo-toolbar{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:8px;
-  padding:8px 10px;background:var(--panel,var(--bg));border-bottom:1px solid var(--border);}
+.acervo-empty{padding:32px 18px;text-align:center;color:var(--muted);font-size:13px;line-height:1.7;}
+.acervo-toolbar{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:8px 10px;
+  flex-wrap:wrap;padding:8px 10px;background:var(--panel,var(--bg));border-bottom:1px solid var(--border);}
 .acervo-views{display:flex;gap:4px;flex-wrap:wrap;}
 .acervo-chip{font-size:11px;padding:3px 9px;border:1px solid var(--border);background:transparent;color:var(--muted);
   border-radius:999px;cursor:pointer;line-height:1.4;}
 .acervo-chip:hover{color:var(--text);}
 .acervo-chip.active{background:var(--accent,#1376ed);border-color:var(--accent,#1376ed);color:#fff;}
-.acervo-tools{display:flex;align-items:center;gap:6px;}
+.acervo-tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-left:auto;}
 .acervo-count{display:inline-block;min-width:16px;text-align:center;font-size:10px;color:var(--muted);
   background:var(--border);border-radius:999px;padding:0 5px;line-height:16px;}
-.acervo-icon-btn{background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:2px 4px;}
+.acervo-icon-btn{background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:2px 4px;
+  display:inline-flex;align-items:center;}
 .acervo-icon-btn:hover{color:var(--text);}
 .acervo-toggle{font-size:10px;padding:2px 7px;border:1px solid var(--border);background:transparent;color:var(--muted);
   border-radius:999px;cursor:pointer;line-height:1.4;}
@@ -6020,10 +6021,14 @@ html[data-conversation-outline="enabled"] #outlineToggleBtn:not([hidden]){displa
 .acervo-group-head{font-size:11px;font-weight:600;color:var(--text);margin:0 2px 6px;
   display:flex;align-items:center;gap:6px;}
 
-.acervo-lanes{display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;}
-.acervo-lane{flex:0 0 200px;min-width:200px;}
+/* Vertical stack of status sections — a horizontal kanban overflows the narrow
+   side-panel (only ~1.8 of 4 lanes fit). Stacking keeps every status reachable
+   without horizontal scroll (#acervo-ux). */
+.acervo-lanes{display:flex;flex-direction:column;gap:14px;}
+.acervo-lane{min-width:0;}
 .acervo-lane-head{font-size:11px;font-weight:600;color:var(--text);margin:0 2px 6px;
-  display:flex;align-items:center;gap:6px;position:sticky;top:0;}
+  display:flex;align-items:center;gap:6px;text-transform:uppercase;letter-spacing:.03em;
+  padding-bottom:4px;border-bottom:1px solid var(--border);}
 .acervo-lane-body{display:flex;flex-direction:column;gap:6px;}
 .acervo-lane-empty{color:var(--muted);font-size:11px;text-align:center;padding:10px 0;}
 
@@ -6035,12 +6040,17 @@ html[data-conversation-outline="enabled"] #outlineToggleBtn:not([hidden]){displa
 .acervo-ico{font-size:14px;flex:0 0 auto;}
 .acervo-name{font-size:12.5px;font-weight:550;line-height:1.3;overflow:hidden;text-overflow:ellipsis;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}
-.acervo-dot{width:7px;height:7px;border-radius:50%;background:var(--accent,#1376ed);margin-left:auto;flex:0 0 auto;}
+.acervo-dot{width:9px;height:9px;border-radius:50%;background:var(--accent,#1376ed);margin-left:auto;flex:0 0 auto;
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--accent,#1376ed) 25%,transparent);}
 .acervo-card-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
 .acervo-pill{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:#fff;background:var(--pill,#8f8a91);
   border-radius:4px;padding:1px 6px;line-height:15px;}
 .acervo-micro{font-size:10.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px;}
 .acervo-eval{font-size:11px;color:#22c55e;font-weight:700;}
+/* Keyboard focus visibility (a11y) — cards/chips/buttons are all interactive. */
+.acervo-card:focus-visible,.acervo-mv-card:focus-visible,.acervo-chip:focus-visible,
+.acervo-toggle:focus-visible,.acervo-icon-btn:focus-visible,.acervo-ctx-btn:focus-visible,
+.acervo-back:focus-visible,.acervo-act:focus-visible{outline:2px solid var(--accent,#1376ed);outline-offset:2px;}
 
 .acervo-detail{padding:10px 12px 20px;}
 .acervo-detail-head{margin-bottom:10px;}
