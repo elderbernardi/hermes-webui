@@ -171,5 +171,19 @@ Cherry-pick faseado, item a item, validado por testes. Resumo:
 
 **Regressão:** suíte completa **9036 passaram / 17 falharam**. As 17 falhas foram trianguladas como **pré-existentes** (não causadas pelos cherry-picks): testes de cobertura de locales (i18n MOD-006), skins/tema default (catppuccin/sienna/verdigris — MOD-001/003/005), `sprint33` confirm nativo, e `issue1426` openrouter (falha idêntica em `exocortex/stable`); mais 4 flakes de ordenação da suíte (`issue3957` ×2 e `pr1970_lmstudio` ×2) que **passam isolados**. Diff acumulado: `api/{config,profiles,providers,routes,streaming}.py` (+837/−45, fora testes); `routes.py` apenas +23 linhas — handlers do Acervo intactos.
 
-> **Pendente de promoção:** branch ainda não mergeada em `exocortex/stable` nem reiniciada em produção. Atualizar "Base atual" só após o merge.
+### Resultado da Fase 2 — executado 2026-06-23 (branch `chore/upstream-sync-2026q2-perf`)
+
+Cherry-pick de performance, validado por testes.
+
+| Item de performance | Resultado | Commits |
+|---|---|---|
+| **Cache do app-shell template (#4774)** | ✅ Aplicado | `c6994b50` (deixa de reler/re-renderizar `index.html` a cada request; cache por (size, mtime_ns)) + `9cc3f30d` (atualiza o guard `test_pwa_manifest_sw` para o helper `_render_index_shell_base` relocado). Testes 46/46. |
+| **Cache mtime do config (#4662 Phase 2)** | ✅ Aplicado | `8006db22` — `_load_yaml_config_file_raw` memoiza o parse de `config.yaml` por (path, mtime_ns, size); `reload_config` no hot-path (profile switch) não re-parseia arquivo inalterado. Teste 3/3. **Resolução manual:** o merge "theirs" interleou mal a função (faltou `st = config_path.stat()`, `return` precoce com expansão deixando o cache morto); substituída pela versão canônica do commit. |
+| **TLS handshake não trava o accept loop (#4727)** | ✅ Aplicado | `a43a9365` (-m1) — handshake TLS movido para fora do accept loop em `server.py`. Teste 8/8. |
+| Sidebar redaction read-once (#4662) | ⏭️ Pulado | Depende do helper upstream `_sidebar_session_response_item` (ausente no fork, que monta a resposta inline) e **perderia** o campo `attention` do fork. Ganho marginal. |
+| Virtual-scroll footer jitter (#4346) | ⏭️ N/A | Patcha o sistema de measurement-delta (`_compensateScrollForMeasurementDelta`/`vscroll-measuring`) que **não existe** no fork (feature pós-base). |
+
+**Regressão:** suíte completa **9044 passaram / 17 falharam** — as mesmas 17 pré-existentes da Fase 1 (zero novas; a 18ª falha transitória foi o próprio guard do #4774, corrigido por `9cc3f30d`).
+
+> **Promoção (local):** Fase 1 e Acervo UX **mescladas em `exocortex/stable`** (merges `--no-ff`); Fase 2 mesclada em seguida. **Nada foi pushado para `origin` nem reiniciado em produção (porta 8787).** Atualizar a linha "Base atual" e push/restart ficam para uma janela de promoção dedicada.
 
