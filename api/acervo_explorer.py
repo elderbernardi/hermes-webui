@@ -373,6 +373,9 @@ def handle_search(handler, parsed):
     f_status = (qs.get("status", [""])[0] or "").strip()
     f_micro = (qs.get("microverso", [""])[0] or "").strip()
     f_tag = (qs.get("tag", [""])[0] or "").strip().lower()
+    # fulltext=0 restricts matching to metadata (title/description/tags/filename),
+    # skipping the body scan — the UI's "Títulos" vs "Tudo" toggle.
+    f_fulltext = (qs.get("fulltext", ["1"])[0] or "1").strip().lower() not in ("0", "false", "no")
 
     root = routes._acervo_root()
     natures = [f_nature] if f_nature else routes._ACERVO_NATURES
@@ -442,8 +445,8 @@ def handle_search(handler, parsed):
                     if score == 0:
                         # Metadata missed — fall back to a bounded full-text body
                         # scan so content-only terms are still found (e.g. a word
-                        # that appears only in the page prose).
-                        body_hit = _body_snippet(f, q)
+                        # that appears only in the page prose). Skipped in titles-only mode.
+                        body_hit = _body_snippet(f, q) if f_fulltext else None
                         if body_hit is None:
                             continue
                         score = 1

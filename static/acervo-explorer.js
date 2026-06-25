@@ -38,8 +38,12 @@
     loadingTree: false,
     loadingCards: false,
     loadingPage: false,
-    search: { q: '', nature: '', status: '', microverso: '', tag: '', results: null, truncated: false, active: false },
+    search: { q: '', nature: '', status: '', microverso: '', tag: '', results: null, truncated: false, active: false, fulltext: true },
     microverses: null,        // cached [{slug,name,description,natures}]
+    showEmptyNatures: false,   // hide count-0 natures in the tree by default
+    artifacts: null,           // cached artifact manifests (artifacts scope)
+    taskFilter: null,          // selected task group in the artifacts scope
+    selectedArtifact: null,    // artifact whose source is in the preview
     ro: null,
   };
 
@@ -154,6 +158,7 @@
       '  </header>' +
       '  <div class="ax-searchbar">' +
       '    <input type="search" class="ax-search-input" data-ax="q" placeholder="' + _esc(_axL('Buscar no acervo…', 'Search the acervo…')) + '" aria-label="' + _esc(_axL('Buscar', 'Search')) + '">' +
+      '    <button type="button" class="ax-mode-toggle" data-ax="mode-toggle" aria-pressed="true" title="' + _esc(_axL('Alternar busca: títulos ↔ texto completo', 'Toggle search: titles ↔ full text')) + '">' + _esc(_axL('Tudo', 'All')) + '</button>' +
       '    <button type="button" class="ax-icon-btn" data-ax="facets-toggle" title="' + _esc(_axL('Filtros', 'Facets')) + '" aria-label="' + _esc(_axL('Filtros', 'Facets')) + '">⚙</button>' +
       '  </div>' +
       '  <div class="ax-facets" data-ax="facets" hidden></div>' +
@@ -223,6 +228,7 @@
       else if (ax === 'refresh') { _reloadCurrent(true); }
       else if (ax === 'expand') { _cycleWidth(); }
       else if (ax === 'facets-toggle') { _toggleFacets(); }
+      else if (ax === 'mode-toggle') { _toggleSearchMode(); }
     });
 
     var input = _q('[data-ax="q"]');
@@ -254,6 +260,27 @@
   function _toggleFacets() {
     var f = _q('[data-ax="facets"]');
     if (f) f.hidden = !f.hidden;
+  }
+
+  // Toggle search scope between titles/metadata only and full text (body scan).
+  function _toggleSearchMode() {
+    AX.search.fulltext = !AX.search.fulltext;
+    var btn = _q('[data-ax="mode-toggle"]');
+    if (btn) {
+      btn.textContent = AX.search.fulltext ? _axL('Tudo', 'All') : _axL('Títulos', 'Titles');
+      btn.setAttribute('aria-pressed', AX.search.fulltext ? 'true' : 'false');
+    }
+    if (AX.search.active) _runSearch();
+  }
+
+  // Case-insensitive highlight of the query inside an (escaped) string.
+  function _hl(text, q) {
+    var s = _esc(text == null ? '' : String(text));
+    if (!q) return s;
+    try {
+      var re = new RegExp('(' + _esc(String(q)).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+      return s.replace(re, '<mark class="ax-hl">$1</mark>');
+    } catch (_) { return s; }
   }
 
   // ----------------------------- resize (T8) -----------------------------
@@ -421,6 +448,8 @@
     AX.slug = '';
     AX.nature = '';
     AX.cards = [];
+    AX.taskFilter = null;
+    AX.selectedArtifact = null;
     AX.search.active = false;
     AX.search.results = null;
     _renderScopes();
@@ -428,6 +457,8 @@
     _renderCards();
     if (scope === 'micro') {
       _loadMicroTree();
+    } else if (scope === 'artifacts') {
+      _loadArtifacts();
     } else {
       _loadTree(scope);
     }
@@ -528,14 +559,24 @@
       _emptyMsg(host, _axL('Nada neste escopo ainda.', 'Nothing in this scope yet.'));
       return;
     }
+    // Hide empty (count 0) natures by default to cut tree noise; offer a toggle.
+    var visibleNatures = AX.showEmptyNatures ? natureNodes : natureNodes.filter(function (n) { return (n.count || 0) > 0; });
+    var emptyCount = natureNodes.length - visibleNatures.length;
     var html = '';
-    html += natureNodes.map(function (n) {
+    html += visibleNatures.map(function (n) {
       var sel = AX.nature === n.name;
       return '<div class="ax-tree-node ax-tree-leaf' + (sel ? ' selected' : '') + '" role="treeitem"' +
         ' tabindex="0" data-nature="' + _esc(n.name) + '">' +
         '<span class="ax-tree-label">' + _esc(_natureLabel(n.name)) + '</span>' +
         '<span class="ax-count">' + (n.count || 0) + '</span></div>';
     }).join('');
+    if (emptyCount > 0 && !AX.showEmptyNatures) {
+      html += '<div class="ax-tree-empty-toggle" data-toggle-empty="1" tabindex="0" role="button">+ ' +
+        emptyCount + ' ' + _esc(_axL('vazias', 'empty')) + '</div>';
+    } else if (AX.showEmptyNatures && natureNodes.some(function (n) { return !(n.count || 0); })) {
+      html += '<div class="ax-tree-empty-toggle" data-toggle-empty="0" tabindex="0" role="button">− ' +
+        _esc(_axL('ocultar vazias', 'hide empty')) + '</div>';
+    }
     if (artifactNodes.length) {
       html += '<div class="ax-tree-section">' + _esc(_axL('Artefatos', 'Artifacts')) + '</div>';
       html += artifactNodes.map(function (n) {
@@ -547,14 +588,121 @@
     _wireTreeEvents();
   }
 
+  // ---------- artifacts scope: task ↔ artifact linking ----------
+  function _sessionArtifactIds() {
+    var ids = {};
+    try {
+      var items = (typeof collectSessionArtifacts === 'function') ? collectSessionArtifacts() : [];
+      (items || []).forEach(function (it) {
+        var m = String((it && it.path) || '').match(/_artifacts\/items\/([^/]+)/);
+        if (m) ids[m[1]] = true;
+      });
+    } catch (_) { /* ignore */ }
+    return ids;
+  }
+
+  async function _loadArtifacts() {
+    var host = _treePane();
+    if (!_hasSession()) { _emptyMsg(host, _axL('Abra uma conversa para ver o acervo.', 'Open a conversation to see the Acervo.')); return; }
+    AX.loadingTree = true;
+    _skeleton(host);
+    try {
+      var d = await api('/api/acervo/artifacts?session_id=' + encodeURIComponent(_sid()));
+      AX.artifacts = Array.isArray(d && d.artifacts) ? d.artifacts : [];
+      _renderArtifactTree();
+    } catch (e) {
+      _errMsg(host, _axL('Falha ao carregar artefatos', 'Failed to load artifacts') + _detail(e));
+    } finally { AX.loadingTree = false; }
+  }
+
+  function _renderArtifactTree() {
+    var host = _treePane();
+    if (!host) return;
+    var arts = AX.artifacts || [];
+    if (!arts.length) { _emptyMsg(host, _axL('Nenhum artefato.', 'No artifacts.')); return; }
+    var sess = _sessionArtifactIds();
+    var sessionArts = arts.filter(function (a) { return sess[a.id]; });
+    var groups = {};
+    arts.forEach(function (a) { var k = a.task_id || '__none__'; (groups[k] = groups[k] || []).push(a); });
+    var html = '';
+    if (sessionArts.length) {
+      var selS = AX.taskFilter === '__session__';
+      html += '<div class="ax-tree-node ax-tree-leaf' + (selS ? ' selected' : '') + '" role="treeitem" tabindex="0" data-task="__session__">' +
+        '<span class="ax-tree-label">● ' + _esc(_axL('Nesta sessão', 'This session')) + '</span>' +
+        '<span class="ax-count">' + sessionArts.length + '</span></div>';
+    }
+    html += '<div class="ax-tree-section">' + _esc(_axL('Por tarefa', 'By task')) + '</div>';
+    var keys = Object.keys(groups).sort(function (a, b) {
+      if (a === '__none__') return 1; if (b === '__none__') return -1; return a < b ? -1 : (a > b ? 1 : 0);
+    });
+    html += keys.map(function (k) {
+      var label = (k === '__none__') ? _axL('Sem tarefa', 'No task') : (_axL('Tarefa ', 'Task ') + k);
+      var sel = AX.taskFilter === k;
+      return '<div class="ax-tree-node ax-tree-leaf' + (sel ? ' selected' : '') + '" role="treeitem" tabindex="0" data-task="' + _esc(k) + '">' +
+        '<span class="ax-tree-label">🗂 ' + _esc(label) + '</span>' +
+        '<span class="ax-count">' + groups[k].length + '</span></div>';
+    }).join('');
+    host.innerHTML = html;
+    _wireTreeEvents();
+  }
+
+  function _artifactsForTask(taskId) {
+    var arts = AX.artifacts || [];
+    if (taskId === '__session__') { var s = _sessionArtifactIds(); return arts.filter(function (a) { return s[a.id]; }); }
+    if (taskId === '__none__') return arts.filter(function (a) { return !a.task_id; });
+    return arts.filter(function (a) { return a.task_id === taskId; });
+  }
+
+  function _selectArtifactTask(taskId) {
+    AX.taskFilter = taskId;
+    AX.nature = '';
+    AX.selectedArtifact = null;
+    var sess = _sessionArtifactIds();
+    AX.cards = _artifactsForTask(taskId).map(function (a) {
+      return { _artifact: a, _sessionMark: !!sess[a.id], rel_path: a.rel_path, title: a.friendly_name || a.title, status: a.status };
+    });
+    AX.loadingCards = false;
+    _renderArtifactTree();
+    _renderCrumb();
+    _renderCards();
+  }
+
+  function _artifactCardHtml(a, sessionMark, q) {
+    var stMeta = _statusMeta(a.status);
+    var st = a.status ? '<span class="ax-pill" style="--pill:' + stMeta.color + '">' + _esc(stMeta.label()) + '</span>' : '';
+    var mv = a.primary_microverso ? '<span class="ax-badge">' + _esc(a.primary_microverso) + '</span>' : '';
+    var task = a.task_id ? '<span class="ax-badge">🗂 ' + _esc(a.task_id) + '</span>' : '';
+    var dot = sessionMark ? '<span class="ax-session-dot" title="' + _esc(_axL('Nesta sessão', 'This session')) + '"></span>' : '';
+    var name = q ? _hl(a.friendly_name || a.title || a.id, q) : _esc(a.friendly_name || a.title || a.id);
+    var selCls = (AX.selectedArtifact && AX.selectedArtifact.id === a.id) ? ' selected' : '';
+    return '<button type="button" class="ax-card' + selCls + '" data-artifact-id="' + _esc(a.id) + '">' +
+      '<div class="ax-card-title">' + dot + name + '</div>' +
+      '<div class="ax-card-meta">' + mv + st + task + '</div></button>';
+  }
+
+  async function _openArtifact(id) {
+    var a = (AX.artifacts || []).find(function (x) { return x.id === id; });
+    if (!a) return;
+    if (AX.dirty && !(await _confirmDiscard())) return;
+    AX.selectedArtifact = a;
+    var rel = a.rel_path || '';
+    var src = /\.md$/i.test(rel) ? rel : (rel.replace(/\/+$/, '') + '/source/source.md');
+    _renderCards();
+    await _loadPage(src);
+  }
+
   function _wireTreeEvents() {
     var host = _treePane();
     if (!host) return;
     host.onclick = function (ev) {
+      var emptyToggle = ev.target.closest('[data-toggle-empty]');
+      var task = ev.target.closest('[data-task]');
       var mv = ev.target.closest('[data-mv]');
       var mvNat = ev.target.closest('[data-mv-nature]');
       var nat = ev.target.closest('[data-nature]');
       var art = ev.target.closest('[data-artifact]');
+      if (emptyToggle) { AX.showEmptyNatures = emptyToggle.getAttribute('data-toggle-empty') === '1'; _renderTree(); return; }
+      if (task) { _selectArtifactTask(task.getAttribute('data-task')); return; }
       if (mvNat) { _selectMicroNature(mvNat.getAttribute('data-mv-slug'), mvNat.getAttribute('data-mv-nature')); return; }
       if (mv) { _toggleMicroverse(mv.getAttribute('data-mv')); return; }
       if (nat) { _selectNature(nat.getAttribute('data-nature')); return; }
@@ -629,14 +777,18 @@
   }
 
   function _cardHtml(p) {
+    if (p && p._artifact) {
+      return _artifactCardHtml(p._artifact, p._sessionMark, (AX.search.active && AX.search.q) ? AX.search.q : '');
+    }
     var st = p.status ? '<span class="ax-pill" style="--pill:' + _statusMeta(p.status).color + '">' + _esc(_statusMeta(p.status).label()) + '</span>' : '';
     var natBadge = p.nature ? '<span class="ax-badge">' + _esc(_natureLabel(p.nature)) + '</span>' : '';
     var clsBadge = p['class'] ? '<span class="ax-badge ax-badge-class">' + _esc(p['class']) + '</span>' : '';
     var sel = AX.selectedPath === p.rel_path;
     var desc = p.description || p.snippet || '';
+    var q = (AX.search.active && AX.search.q) ? AX.search.q : '';
     return '<button type="button" class="ax-card' + (sel ? ' selected' : '') + '" data-page="' + _esc(p.rel_path) + '">' +
-      '<div class="ax-card-title">' + _esc(_label(p)) + '</div>' +
-      (desc ? '<div class="ax-card-desc">' + _esc(desc) + '</div>' : '') +
+      '<div class="ax-card-title">' + (q ? _hl(_label(p), q) : _esc(_label(p))) + '</div>' +
+      (desc ? '<div class="ax-card-desc">' + (q ? _hl(desc, q) : _esc(desc)) + '</div>' : '') +
       '<div class="ax-card-meta">' + natBadge + st + clsBadge + '</div>' +
       '</button>';
   }
@@ -646,19 +798,30 @@
     if (!host) return;
     if (AX.search.active) { _renderSearchResults(); return; }
     if (AX.loadingCards) { _skeleton(host); return; }
+    if (AX.scope === 'artifacts' && !AX.taskFilter) {
+      _emptyMsg(host, _axL('Selecione uma tarefa à esquerda.', 'Select a task on the left.'));
+      return;
+    }
     if (!AX.nature && AX.scope !== 'artifacts') {
       _emptyMsg(host, _axL('Selecione uma natureza à esquerda.', 'Select a nature on the left.'));
       return;
     }
-    if (!AX.cards.length) { _emptyMsg(host, _axL('Nenhuma página aqui.', 'No pages here.')); return; }
+    if (!AX.cards.length) {
+      _emptyMsg(host, AX.scope === 'artifacts'
+        ? _axL('Nenhum artefato nesta tarefa.', 'No artifacts in this task.')
+        : _axL('Nenhuma página aqui.', 'No pages here.'));
+      return;
+    }
     host.innerHTML = '<div class="ax-cards-grid">' + AX.cards.map(_cardHtml).join('') + '</div>';
     _wireCardEvents(host);
   }
 
   function _wireCardEvents(host) {
     host.onclick = function (ev) {
+      var art = ev.target.closest('[data-artifact-id]');
+      if (art) { _openArtifact(art.getAttribute('data-artifact-id')); return; }
       var c = ev.target.closest('[data-page]');
-      if (c) _loadPage(c.getAttribute('data-page'));
+      if (c) { AX.selectedArtifact = null; _loadPage(c.getAttribute('data-page')); }
     };
   }
 
@@ -730,11 +893,22 @@
     var bodyHtml = (typeof renderMd === 'function') ? renderMd(p.body || '') : _esc(p.body || '');
     var quick = _quickActionsHtml(fm);
 
+    // Artifact context banner: when the preview shows an artifact's source, link
+    // back to its originating task (and let the task group be re-selected).
+    var artBanner = '';
+    if (AX.selectedArtifact) {
+      var a = AX.selectedArtifact;
+      var tlabel = a.task_id ? (_axL('Tarefa ', 'Task ') + a.task_id) : _axL('Sem tarefa', 'No task');
+      artBanner = '<div class="ax-art-banner"><span class="ax-art-name">📦 ' + _esc(a.friendly_name || a.title || a.id) + '</span>' +
+        '<button type="button" class="ax-art-task" data-art-task="' + _esc(a.task_id || '__none__') + '">🗂 ' + _esc(tlabel) + '</button></div>';
+    }
+
     host.innerHTML =
       '<div class="ax-preview-head">' +
       '  <div class="ax-preview-title">' + _esc(_label(p)) + '</div>' +
       '  <div class="ax-preview-actions">' + actions + '</div>' +
       '</div>' +
+      artBanner +
       quick +
       (metaRows ? '<div class="ax-meta">' + metaRows + '</div>' : '') +
       '<div class="ax-preview-body ax-md">' + bodyHtml + '</div>';
@@ -844,6 +1018,16 @@
         else if (act === 'move') { _moveDialog(); }
       });
     });
+    // Artifact → task back-link: jump to the artifacts scope and select the task.
+    var taskBtn = host.querySelector('[data-art-task]');
+    if (taskBtn) {
+      taskBtn.addEventListener('click', function () {
+        var task = taskBtn.getAttribute('data-art-task');
+        if (AX.scope !== 'artifacts') { AX.scope = 'artifacts'; _renderScopes(); }
+        if (!AX.artifacts) { _loadArtifacts().then(function () { _selectArtifactTask(task); }); }
+        else { _selectArtifactTask(task); }
+      });
+    }
   }
 
   // ----------------------------- editor (T10) -----------------------------
@@ -1024,6 +1208,7 @@
       if (AX.search.status) params.push('status=' + encodeURIComponent(AX.search.status));
       if (AX.search.microverso) params.push('microverso=' + encodeURIComponent(AX.search.microverso));
       if (AX.search.tag) params.push('tag=' + encodeURIComponent(AX.search.tag));
+      if (!AX.search.fulltext) params.push('fulltext=0');
       var d = await api('/api/acervo/x/search?' + params.join('&'));
       AX.search.results = Array.isArray(d && d.results) ? d.results : [];
       AX.search.truncated = !!(d && d.truncated);

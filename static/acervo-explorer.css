@@ -680,3 +680,80 @@
 .ax-launcher:hover { border-color: var(--accent); color: var(--accent); }
 .ax-launcher:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ax-launcher.hidden { display: none; }
+
+/* ----------------------------- search highlight + mode toggle ----------------------------- */
+mark.ax-hl {
+  background: var(--accent);
+  color: var(--bg);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.ax-mode-toggle {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 0 8px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ax-mode-toggle[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.ax-mode-toggle:hover { background: var(--hover-bg); color: var(--text); }
+.ax-mode-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ----------------------------- hide-empty-natures toggle ----------------------------- */
+.ax-tree-empty-toggle {
+  padding: 4px 8px;
+  margin: 2px 0;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 6px;
+}
+.ax-tree-empty-toggle:hover { background: var(--hover-bg); color: var(--text); }
+.ax-tree-empty-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* ----------------------------- artifacts: session dot + task banner ----------------------------- */
+.ax-session-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--blue, var(--accent));
+  margin-right: 5px;
+  vertical-align: middle;
+}
+.ax-art-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--border-subtle, var(--border));
+  font-size: 12px;
+}
+.ax-art-name {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ax-art-task {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ax-art-task:hover { background: var(--hover-bg); }
+.ax-art-task:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
