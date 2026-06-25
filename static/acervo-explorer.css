@@ -240,12 +240,22 @@
   max-height: 34vh;
 }
 
-/* mid (520–820): 2 panes — list | preview (tree folds into cards header region) */
+/* mid (520–820): 2 columns — navigator (tree over cards) | preview. The tree
+   MUST stay reachable here, otherwise no nature can be selected. */
 .ax-mid .ax-body {
-  grid-template-columns: minmax(200px, 0.85fr) 1.3fr;
+  grid-template-columns: minmax(190px, 0.9fr) minmax(0, 1.4fr);
+  grid-template-rows: minmax(110px, 32vh) 1fr;
+  grid-template-areas: "tree preview" "cards preview";
 }
 .ax-mid .ax-pane-tree {
-  display: none;
+  grid-area: tree;
+  border-bottom: 1px solid var(--border-subtle, var(--border));
+}
+.ax-mid .ax-pane-cards {
+  grid-area: cards;
+}
+.ax-mid .ax-pane-preview {
+  grid-area: preview;
 }
 
 /* wide (>820): 3 panes — tree | cards | preview */
@@ -637,3 +647,36 @@
   font-size: 12.5px;
   padding: 14px 4px;
 }
+
+/* ----------------------------- edge launcher ----------------------------- */
+/* Always-reachable handle on the right edge (shown only when the panel is
+   closed). The in-app ⤢ entry can be hidden when the right panel collapses. */
+.ax-launcher {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1190;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 6px;
+  border: 1px solid var(--border);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  background: var(--surface, var(--surface-subtle, var(--bg)));
+  color: var(--muted, var(--text));
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  box-shadow: -1px 0 8px rgba(0, 0, 0, 0.12);
+}
+.ax-launcher .ax-launcher-txt {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+}
+.ax-launcher .ax-launcher-ico { font-size: 14px; line-height: 1; }
+.ax-launcher:hover { border-color: var(--accent); color: var(--accent); }
+.ax-launcher:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ax-launcher.hidden { display: none; }

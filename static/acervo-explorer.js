@@ -103,12 +103,21 @@
     try { localStorage.setItem(LS_KEY, JSON.stringify({ open: AX.open, width: AX.width })); } catch (_) { /* ignore */ }
   }
   function _restore() {
+    var savedWidth = null;
     try {
       var raw = localStorage.getItem(LS_KEY);
-      if (!raw) return;
-      var d = JSON.parse(raw);
-      if (d && typeof d.width === 'number') AX.width = Math.max(MIN_WIDTH, Math.min(d.width, _maxWidth()));
+      if (raw) { var d = JSON.parse(raw); if (d && typeof d.width === 'number') savedWidth = d.width; }
     } catch (_) { /* ignore */ }
+    if (savedWidth != null) {
+      AX.width = Math.max(MIN_WIDTH, Math.min(savedWidth, _maxWidth()));
+    } else {
+      // First open: pick a width that reveals the full 3-pane layout (tree|cards|
+      // preview) on roomy viewports (>820px → wide), while staying a resizable
+      // side dock that falls back to mid/narrow on smaller screens.
+      var w = Math.min(Math.round(window.innerWidth * 0.55), 980);
+      w = Math.min(Math.max(w, 600), _maxWidth());
+      AX.width = Math.max(MIN_WIDTH, w);
+    }
   }
   function _maxWidth() { return Math.round(window.innerWidth * 0.7); }
 
@@ -118,6 +127,12 @@
   function _build() {
     var mount = (typeof $ === 'function') ? $('acervoExplorerRoot') : document.getElementById('acervoExplorerRoot');
     if (!mount) return null;
+    // The mount ships inside aside.rightpanel, which carries a CSS transform —
+    // an ancestor transform makes position:fixed resolve against that ancestor
+    // (which collapses to ~1px in chat view), clipping the panel to invisibility.
+    // Reparent to <body> so the fixed dock anchors to the viewport. Keeps the
+    // index.html touch trivial and the fix self-contained.
+    if (mount.parentElement !== document.body) { document.body.appendChild(mount); }
     AX.root = mount;
     mount.classList.add('ax-root');
     mount.setAttribute('role', 'dialog');
@@ -319,6 +334,7 @@
     AX.open = true;
     AX.root.classList.add('open');
     AX.root.hidden = false;
+    _showLauncher(false);
     _persist();
     if (!AX.treeNodes.length && !AX.cards.length) {
       _ensureMicroverses().then(function () { _selectScope(AX.scope || 'global'); });
@@ -332,7 +348,30 @@
     }
     AX.open = false;
     if (AX.root) AX.root.classList.remove('open');
+    _showLauncher(true);
     _persist();
+  }
+
+  // Always-reachable edge launcher. The in-app ⤢ button lives inside the right
+  // panel tab strip, which can be collapsed/off-screen; this discreet handle
+  // guarantees the explorer can always be opened. Self-contained (body-level).
+  var _launcherEl = null;
+  function _ensureLauncher() {
+    if (_launcherEl || typeof document === 'undefined' || !document.body) return;
+    var b = document.createElement('button');
+    b.id = 'axLauncher';
+    b.type = 'button';
+    b.className = 'ax-launcher';
+    b.title = _axL('Abrir o Acervo', 'Open the Acervo');
+    b.setAttribute('aria-label', b.title);
+    b.innerHTML = '<span class="ax-launcher-ico">▤</span><span class="ax-launcher-txt">' + _esc(_axL('Acervo', 'Acervo')) + '</span>';
+    b.addEventListener('click', function () { acervoExplorerToggle(); });
+    document.body.appendChild(b);
+    _launcherEl = b;
+  }
+  function _showLauncher(show) {
+    if (!_launcherEl) return;
+    _launcherEl.classList.toggle('hidden', !show);
   }
 
   function acervoExplorerToggle() {
@@ -340,6 +379,15 @@
     if (AX.open) { _close(); } else { _open(); }
   }
   window.acervoExplorerToggle = acervoExplorerToggle;
+
+  // Inject the edge launcher once the DOM is ready.
+  if (typeof document !== 'undefined') {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', _ensureLauncher, { once: true });
+    } else {
+      _ensureLauncher();
+    }
+  }
 
   // Warn before navigating away with unsaved edits.
   window.addEventListener('beforeunload', function (e) {
@@ -553,6 +601,10 @@
       var d = await api(url);
       var nodes = Array.isArray(d && d.nodes) ? d.nodes : [];
       AX.cards = nodes.filter(function (n) { return n.type === 'page' && (!nature || n.nature === nature); });
+      // Clear the loading flag BEFORE rendering: _renderCards() short-circuits to
+      // the skeleton while loadingCards is true, so leaving it set here would keep
+      // the pane stuck on "Carregando…" and never show the cards.
+      AX.loadingCards = false;
       _renderCards();
     } catch (e) {
       _errMsg(host, _axL('Falha ao carregar páginas', 'Failed to load pages') + _detail(e));
@@ -569,6 +621,7 @@
       if (nature) url += '&nature=' + encodeURIComponent(nature);
       var d = await api(url);
       AX.cards = Array.isArray(d && d.pages) ? d.pages : [];
+      AX.loadingCards = false; // clear before render (see _loadScopeCards note)
       _renderCards();
     } catch (e) {
       _errMsg(host, _axL('Falha ao carregar páginas', 'Failed to load pages') + _detail(e));
