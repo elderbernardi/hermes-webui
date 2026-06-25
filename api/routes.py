@@ -7555,6 +7555,9 @@ def handle_get(handler, parsed) -> bool:
         return _handle_acervo_knowledge(handler, parsed)
     if parsed.path == "/api/acervo/titles":
         return _handle_acervo_titles(handler, parsed)
+    if parsed.path.startswith("/api/acervo/x/"):
+        import api.acervo_explorer as ax
+        return ax.handle_acervo_x_get(handler, parsed)
 
     if parsed.path == "/api/artifact/receipt":
         return _handle_artifact_receipt(handler, parsed)
@@ -9179,6 +9182,9 @@ def handle_post(handler, parsed) -> bool:
         return _handle_acervo_status(handler, body)
     if parsed.path == "/api/acervo/stage-context":
         return _handle_acervo_stage_context(handler, body)
+    if parsed.path.startswith("/api/acervo/x/"):
+        import api.acervo_explorer as ax
+        return ax.handle_acervo_x_post(handler, body)
 
     if parsed.path == "/api/file/create-dir":
         return _handle_create_dir(handler, body)
