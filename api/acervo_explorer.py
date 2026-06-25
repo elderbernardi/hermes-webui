@@ -18,9 +18,24 @@ to avoid a circular import at module load (mirrors ``_handle_acervo_stage_contex
 
 import os
 import re
+import datetime
 import yaml
 from pathlib import Path
 from urllib.parse import parse_qs
+
+
+def _json_safe(value):
+    """Coerce a yaml.safe_load result into JSON-serializable types. YAML parses
+    unquoted dates (e.g. ``created: 2026-06-21``) into ``datetime.date`` objects
+    which json.dumps cannot encode — convert those (and nested ones) to ISO
+    strings so the frontmatter survives the /page response."""
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, (datetime.date, datetime.datetime)):
+        return value.isoformat()
+    return value
 
 
 # region: path safety  (_safe_acervo_path)            (T1)
@@ -162,6 +177,26 @@ def _save_page_frontmatter(target: Path, fm_updates, body=None):
 
 _MAX_PAGE_BYTES = 5 * 1024 * 1024  # mirror the 5 MB guard (routes.py:12457)
 _MAX_RAW_BYTES = 50 * 1024 * 1024  # binary preview (pdf/image) upper bound
+_BODY_SCAN_BYTES = 256 * 1024      # per-file cap for full-text search fallback
+
+
+def _body_snippet(path, q_lower):
+    """Bounded full-text search of a page. Returns a snippet (original case)
+    around the first match, or None. Reads at most _BODY_SCAN_BYTES per file so a
+    content-only term (present in the prose but not the title/tags) is still
+    found. Only invoked when the metadata match misses, keeping cost bounded."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            text = fh.read(_BODY_SCAN_BYTES)
+    except OSError:
+        return None
+    idx = text.lower().find(q_lower)
+    if idx < 0:
+        return None
+    start = max(0, idx - 60)
+    end = min(len(text), idx + len(q_lower) + 100)
+    snip = " ".join(text[start:end].split())
+    return ("…" if start > 0 else "") + snip + ("…" if end < len(text) else "")
 
 
 def _rel_to_root(p: Path, root: Path):
@@ -316,7 +351,7 @@ def handle_page(handler, parsed):
     return routes.j(handler, {
         "rel_path": _rel_to_root(target, routes._acervo_root()),
         "title": title,
-        "frontmatter": fm,
+        "frontmatter": _json_safe(fm),
         "body": body,
         "raw_size": size,
         "editable": True,
@@ -395,18 +430,24 @@ def handle_search(handler, parsed):
                 score = 0
                 snippet = ""
                 if q:
-                    hay_title = title.lower()
-                    hay_desc = desc.lower()
-                    hay_name = f.name.lower()
-                    if q in hay_title:
+                    if q in title.lower():
+                        score += 5
+                    if q in desc.lower():
                         score += 3
-                    if q in hay_desc:
-                        score += 2
                         snippet = desc[:200]
-                    if q in hay_name:
-                        score += 1
+                    if q in f.name.lower():
+                        score += 2
+                    if q in " ".join(tags).lower():
+                        score += 3
                     if score == 0:
-                        continue
+                        # Metadata missed — fall back to a bounded full-text body
+                        # scan so content-only terms are still found (e.g. a word
+                        # that appears only in the page prose).
+                        body_hit = _body_snippet(f, q)
+                        if body_hit is None:
+                            continue
+                        score = 1
+                        snippet = snippet or body_hit
                 else:
                     score = 1
                 results.append({

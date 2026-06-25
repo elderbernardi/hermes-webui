@@ -226,3 +226,18 @@ def test_invalid_page_status_rejected_by_constraint():
     # The constraint the handlers apply:
     assert "deleted" not in routes._ACERVO_UI_STATUSES
     assert "" not in routes._ACERVO_UI_STATUSES
+
+
+def test_json_safe_coerces_dates():
+    """YAML parses unquoted dates into datetime.date; the /page response must not
+    crash on them (regression: 'Object of type date is not JSON serializable')."""
+    import json, datetime
+    import api.acervo_explorer as ax
+    fm = {"title": "x", "created": datetime.date(2026, 6, 21),
+          "ts": datetime.datetime(2026, 6, 21, 8, 30, 0),
+          "nested": {"d": datetime.date(2025, 1, 1)}, "tags": ["a", "b"]}
+    safe = ax._json_safe(fm)
+    json.dumps(safe)  # must not raise
+    assert safe["created"] == "2026-06-21"
+    assert safe["nested"]["d"] == "2025-01-01"
+    assert safe["tags"] == ["a", "b"]
