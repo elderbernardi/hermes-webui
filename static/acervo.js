@@ -443,7 +443,6 @@ async function acervoSetStatus(id, status){
     let ok = true;
     const msg = _acL('Arquivar “'+name+'”? Ele sai das vistas padrão (recuperável via "Arquivados").','Archive “'+name+'”? It leaves the default views (recoverable via "Archived").');
     if(typeof showConfirmDialog==='function') ok = await showConfirmDialog({title:_acL('Arquivar','Archive'), message:msg, confirmLabel:_acL('Arquivar','Archive')});
-    else ok = window.confirm(msg);
     if(!ok) return;
   }
   try{
@@ -465,8 +464,6 @@ async function acervoPublish(id){
   let ok = true;
   if(typeof showConfirmDialog==='function'){
     ok = await showConfirmDialog({title:_acL('Publicar no Drive','Publish to Drive'), message:msg, confirmLabel:_acL('Publicar','Publish')});
-  }else{
-    ok = window.confirm(msg);
   }
   if(!ok) return;
   if(typeof showToast==='function') showToast(_acL('Publicando…','Publishing…'), 3000);

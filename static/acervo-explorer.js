@@ -367,12 +367,11 @@
       _ensureMicroverses().then(function () { _selectScope(AX.scope || 'global'); });
     }
   }
-  function _close() {
-    if (AX.dirty) {
-      var msg = _axL('Há alterações não salvas. Fechar mesmo assim?', 'You have unsaved changes. Close anyway?');
-      if (typeof window.confirm === 'function' && !window.confirm(msg)) return;
-      AX.dirty = false;
-    }
+  async function _close() {
+    // Sprint 33: shared app dialog instead of native confirm. _confirmDiscard()
+    // returns true when there are no unsaved edits or the user confirms discard.
+    if (AX.dirty && !(await _confirmDiscard())) return;
+    AX.dirty = false;
     AX.open = false;
     if (AX.root) AX.root.classList.remove('open');
     _showLauncher(true);
@@ -1159,20 +1158,18 @@
   async function _moveDialog() {
     var p = AX.page;
     if (!p || !p.rel_path) return;
-    var dest = (typeof window.prompt === 'function')
-      ? window.prompt(_axL('Novo caminho (relativo ao acervo):', 'New path (acervo-relative):'), p.rel_path)
-      : null;
-    if (!dest || dest === p.rel_path) return;
-    dest = String(dest).trim();
-    var ok = true;
-    if (typeof showConfirmDialog === 'function') {
-      ok = await showConfirmDialog({
+    // Use the shared app input modal (Sprint 33: no native prompt/confirm).
+    var dest = (typeof showPromptDialog === 'function')
+      ? await showPromptDialog({
         title: _axL('Mover/Renomear', 'Move/Rename'),
-        message: _axL('Mover para ', 'Move to ') + '“' + dest + '”?',
+        message: _axL('Novo caminho (relativo ao acervo):', 'New path (acervo-relative):'),
+        defaultValue: p.rel_path,
         confirmLabel: _axL('Mover', 'Move'),
-      });
-    }
-    if (!ok) return;
+      })
+      : null;
+    if (dest == null) return;
+    dest = String(dest).trim();
+    if (!dest || dest === p.rel_path) return;
     try {
       var r = await api('/api/acervo/x/move', {
         method: 'POST',
