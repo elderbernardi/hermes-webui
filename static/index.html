@@ -69,6 +69,7 @@
   }
 })()</script>
 <link rel="stylesheet" href="static/style.css?v=__WEBUI_VERSION__">
+<link rel="stylesheet" href="static/acervo-explorer.css?v=__WEBUI_VERSION__">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" integrity="sha384-LJcOxlx9IMbNXDqJ2axpfEQKkAYbFjJfhXexLfiRJhjDU81mzgkiQq8rkV0j6dVh" crossorigin="anonymous">
   <!-- KaTeX math rendering CSS (loaded eagerly from vendored assets to prevent font CSP noise) -->
   <link rel="stylesheet" href="static/vendor/katex/0.16.22/katex.min.css">
@@ -1440,6 +1441,7 @@
     <div class="workspace-panel-tabs" role="tablist" aria-label="Workspace panel views">
       <button class="workspace-panel-tab active" id="workspaceArtifactsTab" type="button" onclick="switchWorkspacePanelTab('artifacts')" role="tab" aria-selected="true">Sessão <span id="workspaceArtifactsCount" class="workspace-artifacts-count">0</span></button>
       <button class="workspace-panel-tab" id="workspaceAcervoTab" type="button" onclick="switchWorkspacePanelTab('acervo')" role="tab" aria-selected="false">Acervo</button>
+      <button class="workspace-panel-tab workspace-panel-tab--action" id="acervoExplorerLaunch" type="button" onclick="acervoExplorerToggle()" title="Abrir explorador do acervo" aria-label="Open Acervo Explorer">⤢</button>
       <button class="workspace-panel-tab" id="workspaceTodosTab" type="button" onclick="switchWorkspacePanelTab('todos')" role="tab" aria-selected="false" hidden data-i18n="tab_todos">Todos</button>
       <!-- Files moved off the strip; reached via the left-rail "Arquivos" icon (MOD-008). Button kept hidden for switchWorkspacePanelTab + openArtifactPath. -->
       <button class="workspace-panel-tab" id="workspaceFilesTab" type="button" onclick="switchWorkspacePanelTab('files')" role="tab" aria-selected="false" hidden>Files</button>
@@ -1449,6 +1451,7 @@
     <div class="workspace-artifacts" id="workspaceArtifacts"></div>
     <div class="workspace-todos" id="workspaceTodosPanel" hidden style="flex:1;overflow-y:auto;padding:8px 12px"></div>
     <div class="workspace-acervo" id="workspaceAcervo" hidden style="flex:1;overflow-y:auto"></div>
+    <div id="acervoExplorerRoot" hidden></div>
     <div id="wsEmptyState" style="display:none;flex:1;align-items:center;justify-content:center;padding:24px 16px;text-align:center;color:var(--muted);font-size:12px;line-height:1.6"></div>
     <div class="preview-area" id="previewArea">
       <div class="preview-path" id="previewPath">
@@ -1519,6 +1522,7 @@
 <script src="static/ui.js?v=__WEBUI_VERSION__" defer></script>
 <script src="static/workspace.js?v=__WEBUI_VERSION__" defer></script>
 <script src="static/acervo.js?v=__WEBUI_VERSION__" defer></script>
+<script src="static/acervo-explorer.js?v=__WEBUI_VERSION__" defer></script>
 <script src="static/terminal.js?v=__WEBUI_VERSION__" defer></script>
 <script src="static/sessions.js?v=__WEBUI_VERSION__" defer></script>
 <script src="static/commands.js?v=__WEBUI_VERSION__" defer></script>
