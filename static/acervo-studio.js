@@ -166,6 +166,13 @@
   async function acervoStudioOpenPage(relPath) {
     AXS.selectedPath = relPath;
     var reader = _root().querySelector('[data-axs="reader"]');
+    // Mark the active page in the nav — runs for both md and non-md branches.
+    var nav = _root() && _root().querySelector('[data-axs="nav"]');
+    if (nav) {
+      nav.querySelectorAll('.axs-pi').forEach(function (el) {
+        el.classList.toggle('on', el.getAttribute('data-path') === relPath);
+      });
+    }
     reader.innerHTML = '<div class="axs-reader-empty">Carregando…</div>';
     var p;
     try {
@@ -202,11 +209,6 @@
       '  <h1 class="axs-title">' + _esc(p.title || relPath) + '</h1>' +
       '  <div class="axs-md">' + bodyHtml + '</div>' +
       '</div>';
-    // Mark the active page in the nav.
-    var nav = _root().querySelector('[data-axs="nav"]');
-    nav.querySelectorAll('.axs-pi').forEach(function (el) {
-      el.classList.toggle('on', el.getAttribute('data-path') === relPath);
-    });
   }
   window.acervoStudioOpenPage = acervoStudioOpenPage;
 
