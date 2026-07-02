@@ -32,6 +32,10 @@
       '  <section class="axs-reader" data-axs="reader"></section>' +
       '</div>';
     root.querySelector('[data-axs="chat"]').addEventListener('click', _close);
+    var qi = root.querySelector('[data-axs="q"]');
+    if (qi) qi.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') acervoStudioSearch(qi.value);
+    });
     AXS.built = true;
   }
 
@@ -211,6 +215,33 @@
       '</div>';
   }
   window.acervoStudioOpenPage = acervoStudioOpenPage;
+
+  async function acervoStudioSearch(q) {
+    q = (q || '').trim();
+    var reader = _root().querySelector('[data-axs="reader"]');
+    if (!q) { reader.innerHTML = '<div class="axs-reader-empty">Digite um termo.</div>'; return; }
+    reader.innerHTML = '<div class="axs-reader-empty">Buscando…</div>';
+    var d;
+    try {
+      d = await api('/api/acervo/x/search?session_id=' + encodeURIComponent(_sid()) +
+        '&q=' + encodeURIComponent(q));
+    } catch (e) { reader.innerHTML = '<div class="axs-reader-empty">Erro na busca.</div>'; return; }
+    var res = (d && d.results) || [];
+    if (!res.length) { reader.innerHTML = '<div class="axs-reader-empty">Nada encontrado.</div>'; return; }
+    var html = '<div class="axs-results">';
+    res.forEach(function (r) {
+      html += '<button type="button" class="axs-rescard" data-path="' + _esc(r.rel_path) + '">' +
+        '<div class="rt">' + _esc(r.title) + '</div>' +
+        '<div class="rm">' + _esc(r.nature || '') + (r.status ? ' · ' + _esc(r.status) : '') +
+        (r.snippet ? ' — ' + _esc(r.snippet) : '') + '</div></button>';
+    });
+    html += (d.truncated ? '<div class="axs-empty">Resultados truncados.</div>' : '') + '</div>';
+    reader.innerHTML = html;
+    reader.querySelectorAll('.axs-rescard').forEach(function (el) {
+      el.addEventListener('click', function () { acervoStudioOpenPage(el.getAttribute('data-path')); });
+    });
+  }
+  window.acervoStudioSearch = acervoStudioSearch;
 
   function acervoStudioToggle() { if (AXS.open) _close(); else _open(); }
   window.acervoStudioToggle = acervoStudioToggle;
