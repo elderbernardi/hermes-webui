@@ -167,6 +167,19 @@
 
   function _chip(label, cls) { return '<span class="' + (cls || '') + '">' + _esc(label) + '</span>'; }
 
+  // If the body's first non-empty line is a top-level "# Heading" matching the page
+  // title, drop that one line (title is already shown separately as .axs-title).
+  function _stripDupTitleH1(body, title) {
+    if (!body) return body || '';
+    var t = String(title || '').trim().toLowerCase();
+    if (!t) return body;
+    var m = body.match(/^\s*#\s+(.+?)[ \t]*(\r?\n|$)/);
+    if (m && m[1].trim().toLowerCase() === t) {
+      return body.slice(m[0].length).replace(/^\r?\n/, '');
+    }
+    return body;
+  }
+
   async function acervoStudioOpenPage(relPath) {
     AXS.selectedPath = relPath;
     var reader = _root().querySelector('[data-axs="reader"]');
@@ -205,12 +218,14 @@
       String(fm['class']).indexOf('peren') === 0 ? 'perene' : '');
     if (fm.status) chips += _chip('✓ ' + fm.status);
     (Array.isArray(fm.tags) ? fm.tags : []).forEach(function (t) { chips += _chip('#' + t); });
-    var bodyHtml = (typeof renderMd === 'function') ? renderMd(p.body || '') : _esc(p.body || '');
+    var title = p.title || relPath;
+    var body = _stripDupTitleH1(p.body || '', title);
+    var bodyHtml = (typeof renderMd === 'function') ? renderMd(body) : _esc(body);
     reader.innerHTML =
       '<div class="axs-crumb">' + crumb + '</div>' +
       '<div class="axs-doc">' +
       '  <div class="axs-fm">' + chips + '</div>' +
-      '  <h1 class="axs-title">' + _esc(p.title || relPath) + '</h1>' +
+      '  <h1 class="axs-title">' + _esc(title) + '</h1>' +
       '  <div class="axs-md">' + bodyHtml + '</div>' +
       '</div>';
   }
