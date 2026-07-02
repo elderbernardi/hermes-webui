@@ -161,6 +161,55 @@
   window.acervoStudioRenderNav = acervoStudioRenderNav;
   window.acervoStudioSelectScope = acervoStudioSelectScope;
 
+  function _chip(label, cls) { return '<span class="' + (cls || '') + '">' + _esc(label) + '</span>'; }
+
+  async function acervoStudioOpenPage(relPath) {
+    AXS.selectedPath = relPath;
+    var reader = _root().querySelector('[data-axs="reader"]');
+    reader.innerHTML = '<div class="axs-reader-empty">Carregando…</div>';
+    var p;
+    try {
+      p = await api('/api/acervo/x/page?session_id=' + encodeURIComponent(_sid()) +
+        '&path=' + encodeURIComponent(relPath));
+    } catch (e) {
+      reader.innerHTML = '<div class="axs-reader-empty">Erro ao abrir a página.</div>';
+      return;
+    }
+    var crumb = relPath.split('/').map(function (s, i, a) {
+      return i === a.length - 1 ? _esc(s) : '<b>' + _esc(s) + '</b>';
+    }).join(' › ');
+    if (p && p.editable === false && p.raw_url) {
+      var rawUrl = p.raw_url + '&session_id=' + encodeURIComponent(_sid());
+      var isImg = (p.mime || '').indexOf('image/') === 0;
+      var view = isImg
+        ? '<img class="axs-raw" src="' + _esc(rawUrl) + '" alt="' + _esc(relPath) + '">'
+        : '<iframe class="axs-raw" src="' + _esc(rawUrl) + '" sandbox></iframe>';
+      reader.innerHTML = '<div class="axs-crumb">' + crumb + '</div><div class="axs-doc">' + view + '</div>';
+      return;
+    }
+    var fm = (p && p.frontmatter) || {};
+    var chips = '';
+    if (fm.nature) chips += _chip(fm.nature);
+    if (fm['class']) chips += _chip('🔒 ' + fm['class'],
+      String(fm['class']).indexOf('peren') === 0 ? 'perene' : '');
+    if (fm.status) chips += _chip('✓ ' + fm.status);
+    (Array.isArray(fm.tags) ? fm.tags : []).forEach(function (t) { chips += _chip('#' + t); });
+    var bodyHtml = (typeof renderMd === 'function') ? renderMd(p.body || '') : _esc(p.body || '');
+    reader.innerHTML =
+      '<div class="axs-crumb">' + crumb + '</div>' +
+      '<div class="axs-doc">' +
+      '  <div class="axs-fm">' + chips + '</div>' +
+      '  <h1 class="axs-title">' + _esc(p.title || relPath) + '</h1>' +
+      '  <div class="axs-md">' + bodyHtml + '</div>' +
+      '</div>';
+    // Mark the active page in the nav.
+    var nav = _root().querySelector('[data-axs="nav"]');
+    nav.querySelectorAll('.axs-pi').forEach(function (el) {
+      el.classList.toggle('on', el.getAttribute('data-path') === relPath);
+    });
+  }
+  window.acervoStudioOpenPage = acervoStudioOpenPage;
+
   function acervoStudioToggle() { if (AXS.open) _close(); else _open(); }
   window.acervoStudioToggle = acervoStudioToggle;
 
