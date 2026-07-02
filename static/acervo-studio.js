@@ -66,6 +66,101 @@
     if (b) b.style.display = show ? '' : 'none';
   }
 
+  var SCOPES = [
+    { key: 'macro', ico: '🧠', label: 'Soul', tree: true },
+    { key: 'global', ico: '🌐', label: 'Global', tree: true },
+    { key: 'shared', ico: '🔗', label: 'Shared', tree: true },
+    { key: 'micro', ico: '🪐', label: 'Microversos', tree: true },
+    { key: 'artifacts', ico: '📦', label: 'Artefatos', tree: true },
+    { key: 'inbox', ico: '📥', label: 'Inbox', tree: true }
+  ];
+
+  async function _tree(scope, slug) {
+    var url = '/api/acervo/x/tree?session_id=' + encodeURIComponent(_sid()) +
+      '&scope=' + encodeURIComponent(scope) + '&depth=2' +
+      (slug ? '&slug=' + encodeURIComponent(slug) : '');
+    return await api(url);
+  }
+
+  function _human(rel) {
+    return (typeof humanizeFilename === 'function') ? humanizeFilename(rel) : String(rel || '');
+  }
+
+  async function acervoStudioRenderNav() {
+    var nav = _root() && _root().querySelector('[data-axs="nav"]');
+    if (!nav) return;
+    if (!_sid()) { nav.innerHTML = '<div class="axs-empty">Sem sessão ativa.</div>'; return; }
+    var html = '<div class="axs-sec">Acervo</div>';
+    // Inbox count badge (best-effort).
+    var inboxCount = 0;
+    try { inboxCount = (await _tree('inbox', '')).count || 0; } catch (e) {}
+    SCOPES.forEach(function (s) {
+      var on = AXS.scope === s.key ? ' on' : '';
+      var badge = (s.key === 'inbox' && inboxCount) ?
+        '<span class="ct">' + inboxCount + '</span>' : '';
+      html += '<div class="axs-ni' + on + '" data-scope="' + s.key + '">' +
+        '<span class="ico">' + s.ico + '</span>' + _esc(s.label) + badge + '</div>' +
+        '<div class="axs-sub" data-sub="' + s.key + '"></div>';
+    });
+    nav.innerHTML = html;
+    nav.querySelectorAll('.axs-ni').forEach(function (el) {
+      el.addEventListener('click', function () {
+        acervoStudioSelectScope(el.getAttribute('data-scope'), '');
+      });
+    });
+    if (AXS.scope) acervoStudioSelectScope(AXS.scope, AXS.slug);
+  }
+
+  async function acervoStudioSelectScope(scope, slug) {
+    AXS.scope = scope; AXS.slug = slug || '';
+    var nav = _root().querySelector('[data-axs="nav"]');
+    nav.querySelectorAll('.axs-ni').forEach(function (el) {
+      el.classList.toggle('on', el.getAttribute('data-scope') === scope);
+    });
+    var sub = nav.querySelector('[data-sub="' + scope + '"]');
+    nav.querySelectorAll('.axs-sub').forEach(function (s) { if (s !== sub) s.innerHTML = ''; });
+    if (!sub) return;
+    sub.innerHTML = '<div class="axs-empty">Carregando…</div>';
+    var data;
+    try { data = await _tree(scope, slug); }
+    catch (e) { sub.innerHTML = '<div class="axs-empty">Erro ao carregar.</div>'; return; }
+    var nodes = data.nodes || [];
+    if (!nodes.length) { sub.innerHTML = '<div class="axs-empty">Vazio.</div>'; return; }
+    var out = '';
+    nodes.forEach(function (n) {
+      if (n.type === 'microverse') {
+        out += '<div class="axs-pi" data-mv="' + _esc(n.slug) + '">🪐 ' +
+          _esc(n.title) + (n.count ? ' (' + n.count + ')' : '') + '</div>';
+      } else if (n.type === 'page') {
+        var st = n.status === 'ready' ? ' ready' : '';
+        out += '<div class="axs-pi" data-path="' + _esc(n.rel_path) + '">' +
+          '<span class="st' + st + '"></span>' + _esc(n.title || _human(n.rel_path)) + '</div>';
+      } else if (n.type === 'nature') {
+        out += '<div class="axs-sec" style="margin-left:18px">' + _esc(n.name) +
+          ' (' + (n.count || 0) + ')</div>';
+      } else if (n.type === 'intake') {
+        out += '<div class="axs-pi"><span class="st"></span>' + _esc(n.title) +
+          ' · ' + _esc(n.status) + '</div>';
+      } else if (n.type === 'artifact') {
+        out += '<div class="axs-pi">📦 ' + _esc(n.title || n.name) + '</div>';
+      }
+    });
+    sub.innerHTML = out;
+    sub.querySelectorAll('[data-mv]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        acervoStudioSelectScope('micro', el.getAttribute('data-mv'));
+      });
+    });
+    sub.querySelectorAll('[data-path]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        if (typeof acervoStudioOpenPage === 'function')
+          acervoStudioOpenPage(el.getAttribute('data-path'));
+      });
+    });
+  }
+  window.acervoStudioRenderNav = acervoStudioRenderNav;
+  window.acervoStudioSelectScope = acervoStudioSelectScope;
+
   function acervoStudioToggle() { if (AXS.open) _close(); else _open(); }
   window.acervoStudioToggle = acervoStudioToggle;
 
