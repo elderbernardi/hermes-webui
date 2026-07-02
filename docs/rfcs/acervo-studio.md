@@ -281,7 +281,21 @@ MOD-009 pattern, taken further):
 | `api/routes.py` (upstream-owned) | **0 new lines** (prefix dispatch already exists) | none |
 | `static/index.html` (upstream-owned) | ~4 lines: nav/launch entry + 2 includes + `#acervoStudioRoot` mount | low |
 
-- **No new JS build** — vanilla IIFE, `sourceType:"script"`, lint via `npm run lint:runtime`.
+- **Frontend tech — vanilla now, framework-island reassessed at Phase 2 (decided 2026-07-02).**
+  Phase 0–1 are built as **vanilla IIFE** (`sourceType:"script"`, no build, lint via
+  `npm run lint:runtime`) — consistent with the app, cheapest rebase-safety, no impact on
+  the provisioned `~/.hermes/hermes-webui/` runtime. Rationale for not adopting a framework
+  up front: the Studio is *not upstreamable regardless* (it is Exocórtex-domain-specific and
+  the fork policy is already "no upstream PRs"), so the only thing protected by staying
+  build-free is the fork's **own** operational simplicity — pull-rebase-ability is governed by
+  *shared-file* conflict surface, not language, and the Studio lives in new files either way.
+  The stateful flows that would actually justify a framework arrive in **Phases 2–4** (intake
+  triage, publish gate, pinnable assistant); at Phase 2 we reassess adopting a **pre-bundled
+  island** — a lightweight framework (e.g. Preact ~4KB) authored under `studio-src/` and built
+  to a single **IIFE** `acervo-studio.bundle.{js,css}` in `static/`. Because the bundle output
+  carries no ES `import`/`export`, it still passes the runtime guard and the server still
+  serves one static file — so the island is a safe, isolated, reversible upgrade with zero
+  effect on the rest of the app. Decision deferred (YAGNI) until the flows prove it necessary.
 - Mount is **reparented to `<body>`** at runtime (rightpanel carries a `transform` that
   traps `position:fixed` — the MOD-009 lesson).
 - Catalog as **MOD-010** in `EXOCRTX_MODIFICATIONS.md` (touch points + rebase guidance);
