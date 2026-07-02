@@ -46,3 +46,22 @@ def test_micro_nodes_lists_pages_for_a_slug(acervo):
     pages = [n for n in nodes if n["type"] == "page"]
     assert any(n["name"] == "knowledge" for n in natures)
     assert any(p["title"] == "Precificação" and p["status"] == "ready" for p in pages)
+
+
+import json
+
+
+def test_inbox_nodes_lists_incoming_envelopes(acervo):
+    env = acervo / "_inbox" / "incoming" / "int_20260616_open-notebook"
+    (env / "original").mkdir(parents=True)
+    (env / "manifest.json").write_text(
+        json.dumps({"title": "Open Notebook", "status": "received"}),
+        encoding="utf-8")
+    (acervo / "_inbox" / "incoming" / "int_20260701_bare").mkdir(parents=True)
+
+    nodes = ax._inbox_nodes(routes, acervo)
+    by_id = {n["id"]: n for n in nodes}
+    assert by_id["int_20260616_open-notebook"]["title"] == "Open Notebook"
+    assert by_id["int_20260616_open-notebook"]["status"] == "received"
+    # Bare envelope with no manifest still lists, with a defaulted status.
+    assert by_id["int_20260701_bare"]["status"] == "received"

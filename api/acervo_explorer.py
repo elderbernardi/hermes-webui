@@ -287,6 +287,40 @@ def _micro_nodes(routes, root, slug, depth):
     return nodes
 
 
+def _inbox_nodes(routes, root):
+    """Tree nodes for the `inbox` scope — one per `_inbox/incoming/<envelope>/`.
+
+    Read-only. Title/status come from the envelope's manifest.json when present
+    (Phase 0 does not extract or promote — that is Phase 2).
+    """
+    import json
+    nodes = []
+    inc = root / "_inbox" / "incoming"
+    if not inc.is_dir():
+        return nodes
+    try:
+        dirs = sorted([d for d in inc.iterdir()
+                       if d.is_dir() and not d.name.startswith(".")],
+                      key=lambda p: p.name, reverse=True)
+    except OSError:
+        return nodes
+    for d in dirs:
+        title = routes._humanize_slug(d.name)
+        status = "received"
+        mf = d / "manifest.json"
+        if mf.is_file():
+            try:
+                data = json.loads(mf.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    title = data.get("title") or data.get("friendly_name") or title
+                    status = data.get("status") or status
+            except (OSError, ValueError):
+                pass
+        nodes.append({"type": "intake", "id": d.name, "title": title,
+                      "status": status, "rel_path": _rel_to_root(d, root)})
+    return nodes
+
+
 def handle_tree(handler, parsed):
     """GET /api/acervo/x/tree — browse global/shared/macro + artifacts (SPEC §3.1)."""
     import api.routes as routes
@@ -337,6 +371,11 @@ def handle_tree(handler, parsed):
         nodes = _micro_nodes(routes, root, slug, depth)
         return routes.j(handler, {"scope": scope,
                                   "root": "micro" + ("/" + slug if slug else ""),
+                                  "nodes": nodes, "count": len(nodes)})
+
+    if scope == "inbox":
+        nodes = _inbox_nodes(routes, root)
+        return routes.j(handler, {"scope": scope, "root": "_inbox/incoming",
                                   "nodes": nodes, "count": len(nodes)})
 
     if scope == "macro":
