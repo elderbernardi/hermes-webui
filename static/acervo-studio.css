@@ -1,0 +1,42 @@
+/* MOD-010 Acervo Studio — self-contained, .axs-* namespace. Read-only Phase 0.
+   Theme follows the app: default vars = current EXCRTX light; :root.dark = Graphite. */
+#acervoStudioRoot[hidden]{display:none !important;}
+.axs-root{
+  --axs-bg:#f4f5f8;--axs-sb:#e8ecf2;--axs-surf:#ffffff;--axs-surf2:#f0f2f6;
+  --axs-bd:#d2d6e3;--axs-bd2:#bcc1ce;--axs-ink:#03123f;--axs-strong:#010a28;
+  --axs-mut:#8f8a91;--axs-em:#1a3c86;--axs-acc:#1376ed;--axs-acct:#0e5fd6;
+  --axs-accbg:rgba(19,118,237,.08);--axs-accbd:rgba(19,118,237,.32);
+  --axs-ok:#38A169;--axs-line:#e4e8ef;
+  --axs-serif:Georgia,'Times New Roman',serif;
+  --axs-sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,system-ui,sans-serif;
+  --axs-mono:'SF Mono',ui-monospace,monospace;
+  position:fixed;inset:0;z-index:1200;background:var(--axs-bg);color:var(--axs-ink);
+  font-family:var(--axs-sans);display:flex;flex-direction:column;
+}
+:root.dark .axs-root{
+  --axs-bg:#1b1d21;--axs-sb:#202226;--axs-surf:#26292e;--axs-surf2:#212327;
+  --axs-bd:#32353b;--axs-bd2:#3d414a;--axs-ink:#d7d8db;--axs-strong:#f0f1f3;
+  --axs-mut:#888b93;--axs-em:#a9adb5;--axs-acc:#3b8af0;--axs-acct:#6baaf6;
+  --axs-accbg:rgba(59,138,240,.12);--axs-accbd:rgba(59,138,240,.4);
+  --axs-ok:#7EC98C;--axs-line:#2b2e34;
+}
+.axs-top{height:46px;display:flex;align-items:center;gap:12px;padding:0 12px;
+  background:var(--axs-sb);border-bottom:1px solid var(--axs-bd);flex:none;}
+.axs-mode{display:flex;background:var(--axs-bg);border:1px solid var(--axs-bd2);
+  border-radius:8px;padding:2px;font:600 11.5px/1 var(--axs-sans);}
+.axs-mode button{padding:5px 11px;border-radius:6px;color:var(--axs-mut);
+  background:none;border:none;cursor:pointer;font:inherit;}
+.axs-mode button.on{background:var(--axs-surf);color:var(--axs-strong);}
+.axs-cmd{flex:1;max-width:520px;margin:0 auto;height:30px;background:var(--axs-bg);
+  border:1px solid var(--axs-bd2);border-radius:9px;display:flex;align-items:center;
+  padding:0 11px;}
+.axs-cmd input{flex:1;background:none;border:none;outline:none;color:var(--axs-ink);
+  font:400 12.5px/1 var(--axs-sans);}
+.axs-body{flex:1;display:flex;min-height:0;}
+.axs-nav{width:250px;flex:none;background:var(--axs-sb);
+  border-right:1px solid var(--axs-bd);overflow:auto;padding:10px 8px;}
+.axs-reader{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--axs-bg);}
+.axs-launcher{position:fixed;right:14px;bottom:14px;z-index:1100;display:flex;
+  align-items:center;gap:7px;background:var(--axs-acc,#1376ed);color:#fff;border:none;
+  border-radius:10px;padding:10px 13px;cursor:pointer;font:600 12px/1 system-ui;
+  box-shadow:0 6px 18px -6px rgba(0,0,0,.5);}
