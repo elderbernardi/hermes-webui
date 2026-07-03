@@ -610,6 +610,23 @@ def handle_search(handler, parsed):
                               "truncated": truncated})
 
 
+def _reject_resolved_dot(routes, target):
+    """Reject a symlink-RESOLVED path that lands on a dot-prefixed component
+    (.quarantine/.git/...) even though _safe_acervo_path passed on the input
+    string. _safe_acervo_path only checks the literal input components, so a
+    clean-looking path that resolves through a symlink into e.g. .quarantine/
+    would otherwise slip through. Mirrors acervo_studio._resolved_dot_safe;
+    duplicated locally (not imported) to avoid a circular import, since
+    acervo_studio already imports from this module.
+    """
+    root_r = routes._acervo_root().resolve()
+    try:
+        parts = target.relative_to(root_r).parts
+    except ValueError:
+        return False
+    return not any(p.startswith(".") for p in parts)
+
+
 def handle_raw(handler, parsed):
     """GET /api/acervo/x/raw — stream a non-md acervo file (pdf/image) for preview."""
     import api.routes as routes
@@ -624,6 +641,8 @@ def handle_raw(handler, parsed):
     try:
         target = _safe_acervo_path(rel)
     except ValueError:
+        return routes.bad(handler, "invalid path", 400)
+    if not _reject_resolved_dot(routes, target):
         return routes.bad(handler, "invalid path", 400)
     if not target.is_file():
         return routes.j(handler, {"error": "file not found"}, status=404)

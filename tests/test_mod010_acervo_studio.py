@@ -295,6 +295,28 @@ def test_download_symlinked_artifact_dir_blocked(acervo, session_ok, jcap):
     assert jcap["status"] == 400
 
 
+def test_raw_symlink_into_quarantine_blocked(acervo, session_ok, jcap):
+    """x/raw must apply the same resolved-path dot-guard as x/download: a
+    clean-looking input path (global/knowledge/link.md) that RESOLVES through
+    a symlink into .quarantine/ must be rejected, not streamed — even though
+    _safe_acervo_path only inspects the literal input components."""
+    quarantine = acervo / ".quarantine"
+    quarantine.mkdir(parents=True)
+    secret = quarantine / "secret.txt"
+    secret.write_text("TOP SECRET SENTINEL", encoding="utf-8")
+
+    link_dir = acervo / "global" / "knowledge"
+    link_dir.mkdir(parents=True)
+    os.symlink(secret, link_dir / "link.md")
+
+    h = _Handler()
+    ax.handle_acervo_x_get(h, _get(
+        "/api/acervo/x/raw?session_id=sid1&path=global/knowledge/link.md"))
+    assert jcap["status"] == 400
+    assert h.status != 200
+    assert b"TOP SECRET SENTINEL" not in h.wfile.getvalue()
+
+
 # ── Phase 1: Phase-0 Minors — _micro_title harmonization + tree dispatch ───
 
 def test_micro_title_strips_indice_marker(acervo):
