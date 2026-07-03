@@ -315,10 +315,14 @@
     var reader = root.querySelector('[data-axs="reader"]');
     var fm = p.frontmatter || {};
     var tagsCsv = Array.isArray(fm.tags) ? fm.tags.join(', ') : (fm.tags || '');
-    var stSel = AXS_STATUSES.map(function (s) {
-      return '<option value="' + s + '"' +
-        ((fm.status || 'draft') === s ? ' selected' : '') + '>' + s + '</option>';
-    }).join('');
+    var curSt = (fm.status || '').trim();
+    var stInSet = AXS_STATUSES.indexOf(curSt) >= 0;
+    var stSel = (curSt && !stInSet
+        ? '<option value="" selected>' + _esc('(manter: ' + curSt + ')') + '</option>' : '')
+      + AXS_STATUSES.map(function (s) {
+          var sel = stInSet ? (curSt === s) : (!curSt && s === 'draft');
+          return '<option value="' + s + '"' + (sel ? ' selected' : '') + '>' + s + '</option>';
+        }).join('');
     var natSel = '<option value="">—</option>' + AXS_NATURES.map(function (n) {
       return '<option value="' + n + '"' +
         ((fm.nature || '') === n ? ' selected' : '') + '>' + n + '</option>';
