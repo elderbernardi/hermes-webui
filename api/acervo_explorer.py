@@ -365,6 +365,7 @@ def handle_tree(handler, parsed):
                     "type": "artifact",
                     "rel_path": _rel_to_root(child, root),
                     "name": child.name,
+                    "kind": "dir" if child.is_dir() else "file",
                     "title": routes._humanize_slug(child.stem if child.is_file() else child.name),
                 })
         return routes.j(handler, {"scope": scope, "root": "_artifacts/items",
@@ -800,7 +801,10 @@ def handle_acervo_x_get(handler, parsed):
         return handle_search(handler, parsed)
     if path == "/api/acervo/x/raw":
         return handle_raw(handler, parsed)
-    return routes.bad(handler, "unknown acervo explorer endpoint", 404)
+    # MOD-010: delegate Studio-only sub-paths (x/download now; intake/publish/
+    # assist in later phases) before 404ing. Late import avoids a load cycle.
+    import api.acervo_studio as studio
+    return studio.handle_studio_get(handler, parsed)
 
 
 def handle_acervo_x_post(handler, body):
@@ -819,4 +823,5 @@ def handle_acervo_x_post(handler, body):
         return handle_tags(handler, body)
     if path == "/api/acervo/x/stage":
         return handle_stage(handler, body)
-    return routes.bad(handler, "unknown acervo explorer endpoint", 404)
+    import api.acervo_studio as studio
+    return studio.handle_studio_post(handler, body)
