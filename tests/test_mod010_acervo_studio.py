@@ -190,7 +190,7 @@ def test_download_artifact_id_validation(acervo, session_ok, jcap, bad_id):
     h = _Handler()
     studio.handle_download(h, _get(
         "/api/acervo/x/download?session_id=sid1&artifact_id=" + bad_id))
-    assert jcap["status"] in (400, 404)
+    assert jcap["status"] == 400
 
 
 def test_download_rejects_both_params(acervo, session_ok, jcap):
@@ -224,3 +224,72 @@ def test_artifacts_tree_nodes_carry_kind(acervo, session_ok, jcap):
     kinds = {n["name"]: n["kind"] for n in jcap["obj"]["nodes"]}
     assert kinds["pkg_dir"] == "dir"
     assert kinds["loose.md"] == "file"
+
+
+# ── Security regressions: symlink escapes into .quarantine/ ───────────────
+
+import os
+
+
+def test_download_file_symlink_into_quarantine_blocked(acervo, session_ok, jcap):
+    """A clean-looking input path (global/knowledge/link.md) that RESOLVES
+    through a symlink into .quarantine/ must be rejected, even though
+    _safe_acervo_path only inspects the literal input components."""
+    quarantine = acervo / ".quarantine"
+    quarantine.mkdir(parents=True)
+    secret = quarantine / "secret.txt"
+    secret.write_text("TOP SECRET SENTINEL", encoding="utf-8")
+
+    link_dir = acervo / "global" / "knowledge"
+    link_dir.mkdir(parents=True)
+    os.symlink(secret, link_dir / "link.md")
+
+    h = _Handler()
+    studio.handle_download(h, _get(
+        "/api/acervo/x/download?session_id=sid1&path=global/knowledge/link.md"))
+    assert jcap["status"] == 400
+
+
+def test_download_artifact_zip_excludes_escaping_symlink(acervo, session_ok):
+    """A symlink inside the artifact dir that resolves OUTSIDE the artifact
+    (but still under the acervo root, e.g. into .quarantine/) must be skipped
+    by the zip's containment check — the leak must not be zipped."""
+    quarantine = acervo / ".quarantine"
+    quarantine.mkdir(parents=True)
+    secret = quarantine / "secret.txt"
+    secret.write_text("TOP SECRET SENTINEL", encoding="utf-8")
+
+    base = acervo / "_artifacts" / "items" / "art_demo"
+    (base / "source").mkdir(parents=True)
+    (base / "exports").mkdir()
+    (base / "receipts").mkdir()
+    (base / "manifest.json").write_text("{}", encoding="utf-8")
+    (base / "source" / "a.md").write_text("# a\n", encoding="utf-8")
+    (base / "exports" / "a.pdf").write_bytes(b"%PDF")
+    (base / "receipts" / "r.json").write_text("{}", encoding="utf-8")
+    os.symlink(secret, base / "source" / "leak.txt")
+
+    h = _Handler()
+    studio.handle_download(h, _get(
+        "/api/acervo/x/download?session_id=sid1&artifact_id=art_demo"))
+    assert h.status == 200
+    zf = zipfile.ZipFile(io.BytesIO(h.wfile.getvalue()))
+    names = set(zf.namelist())
+    assert names == {"manifest.json", "source/a.md", "exports/a.pdf"}
+    for name in names:
+        assert b"TOP SECRET SENTINEL" not in zf.read(name)
+
+
+def test_download_symlinked_artifact_dir_blocked(acervo, session_ok, jcap):
+    """If _artifacts/items/<id> itself is a symlink to .quarantine/, the
+    input string looks clean ('evil') but resolves onto a dot-prefixed
+    component — must be rejected."""
+    quarantine = acervo / ".quarantine"
+    quarantine.mkdir(parents=True)
+    (acervo / "_artifacts" / "items").mkdir(parents=True)
+    os.symlink(quarantine, acervo / "_artifacts" / "items" / "evil")
+
+    h = _Handler()
+    studio.handle_download(h, _get(
+        "/api/acervo/x/download?session_id=sid1&artifact_id=evil"))
+    assert jcap["status"] == 400

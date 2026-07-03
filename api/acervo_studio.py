@@ -28,12 +28,29 @@ from api.acervo_explorer import _safe_acervo_path
 _MAX_FILE_DOWNLOAD_BYTES = 50 * 1024 * 1024  # mirror MOD-009 _MAX_RAW_BYTES
 
 
+def _resolved_dot_safe(routes, target):
+    """Reject a symlink-RESOLVED path that lands on a dot-prefixed component
+    (.quarantine/.git/...) even though _safe_acervo_path passed on the input
+    string. _safe_acervo_path only checks the literal input components, so a
+    clean-looking path that resolves through a symlink into e.g. .quarantine/
+    would otherwise slip through.
+    """
+    root_r = routes._acervo_root().resolve()
+    try:
+        parts = target.relative_to(root_r).parts
+    except ValueError:
+        return False
+    return not any(p.startswith(".") for p in parts)
+
+
 def _download_file(handler, routes, rel):
     """Stream one acervo file as an attachment (md or binary alike)."""
     import mimetypes as _mt
     try:
         target = _safe_acervo_path(rel)
     except ValueError:
+        return routes.bad(handler, "invalid path", 400)
+    if not _resolved_dot_safe(routes, target):
         return routes.bad(handler, "invalid path", 400)
     if not target.is_file():
         return routes.j(handler, {"error": "file not found"}, status=404)
@@ -76,12 +93,18 @@ def _download_artifact_zip(handler, routes, art_id):
         target = _safe_acervo_path("_artifacts/items/" + art_id)
     except ValueError:
         return routes.bad(handler, "invalid artifact id", 400)
+    if not _resolved_dot_safe(routes, target):
+        return routes.bad(handler, "invalid artifact id", 400)
     if not target.is_dir():
         return routes.j(handler, {"error": "artifact not found"}, status=404)
 
-    root_r = routes._acervo_root().resolve()
+    # Anchor containment on the artifact's OWN directory (not the whole acervo
+    # root): a symlink inside the artifact that resolves elsewhere under the
+    # acervo root (e.g. into .quarantine/) must NOT be treated as contained
+    # just because it stays under the acervo root as a whole.
+    art_root = target.resolve()
     files, _total, limit_hit = routes._folder_download_collect(
-        target, root_r, routes._folder_zip_max_bytes(),
+        target, art_root, routes._folder_zip_max_bytes(),
         routes._folder_zip_max_files())
     if limit_hit:
         return routes.j(handler, {"error": "artifact too large",
@@ -107,7 +130,7 @@ def _download_artifact_zip(handler, routes, art_id):
         for fp, arcname in files:
             fd = None
             try:
-                fd = routes.open_anchored_fd(root_r, fp.resolve(), want_dir=False)
+                fd = routes.open_anchored_fd(art_root, fp.resolve(), want_dir=False)
                 info = zipfile.ZipInfo(arcname)
                 info.compress_type = zipfile.ZIP_DEFLATED
                 with os.fdopen(fd, "rb", closefd=True) as src:
