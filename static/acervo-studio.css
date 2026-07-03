@@ -81,3 +81,32 @@
 .axs-rescard:hover{border-color:var(--axs-acct);}
 .axs-rescard .rt{font:600 13px/1.3 var(--axs-serif);color:var(--axs-strong);}
 .axs-rescard .rm{font:400 11px/1.4 var(--axs-sans);color:var(--axs-mut);margin-top:3px;}
+.axs-acts{margin-left:auto;display:flex;gap:6px;align-items:center;}
+.axs-act{background:var(--axs-surf);border:1px solid var(--axs-bd2);border-radius:7px;
+  padding:4px 9px;color:var(--axs-ink);cursor:pointer;font:600 11px/1 var(--axs-sans);
+  white-space:nowrap;}
+.axs-act:hover{border-color:var(--axs-acct);color:var(--axs-strong);}
+.axs-act-primary{background:var(--axs-acc);border-color:var(--axs-acc);color:#fff;}
+.axs-act-primary:hover{color:#fff;filter:brightness(1.08);}
+.axs-warn{background:var(--axs-accbg);border:1px solid var(--axs-accbd);color:var(--axs-acct);
+  border-radius:8px;padding:8px 11px;font:600 11.5px/1.4 var(--axs-sans);margin-bottom:12px;}
+.axs-editor{display:flex;flex-direction:column;gap:10px;}
+.axs-field{display:flex;flex-direction:column;gap:4px;font:600 10.5px/1 var(--axs-sans);
+  color:var(--axs-mut);}
+.axs-field input,.axs-field select,.axs-field textarea{background:var(--axs-surf);
+  border:1px solid var(--axs-bd2);border-radius:7px;padding:7px 9px;color:var(--axs-ink);
+  font:400 12.5px/1.4 var(--axs-sans);outline:none;}
+.axs-field input:focus,.axs-field select:focus,.axs-field textarea:focus{border-color:var(--axs-acc);}
+.axs-field textarea{font-family:var(--axs-mono);min-height:46vh;line-height:1.55;resize:vertical;}
+.axs-frow{display:flex;gap:10px;}
+.axs-frow .axs-field{flex:1;}
+.axs-fgrow{flex:1;}
+.axs-menu{position:fixed;z-index:1300;background:var(--axs-surf);border:1px solid var(--axs-bd2);
+  border-radius:9px;padding:4px;box-shadow:0 10px 26px -8px rgba(0,0,0,.45);
+  display:flex;flex-direction:column;min-width:190px;}
+.axs-menu button{background:none;border:none;border-radius:6px;padding:7px 10px;
+  text-align:left;color:var(--axs-ink);cursor:pointer;font:500 12px/1 var(--axs-sans);}
+.axs-menu button:hover{background:var(--axs-surf2);color:var(--axs-strong);}
+.axs-menu-sep{height:1px;background:var(--axs-line);margin:4px 2px;}
+.axs-sub{margin:1px 0 3px;}
+.axs-sub:empty{display:none;}

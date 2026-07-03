@@ -3,11 +3,12 @@
    renderMd/humanizeFilename. Prefix: acervoStudio* / AXS / .axs-*. */
 'use strict';
 (function () {
-  var AXS = { built: false, open: false, scope: 'micro', slug: '', selectedPath: '' };
+  var AXS = { built: false, open: false, scope: 'micro', slug: '', selectedPath: '',
+    page: null, editing: false, dirty: false, artifactId: '' };
 
   function _sid() { return (typeof S !== 'undefined' && S && S.session) ? S.session.session_id : ''; }
   function _esc(s) { return (typeof esc === 'function') ? esc(s) : String(s == null ? '' : s); }
-  function _toast(m, t) { if (typeof showToast === 'function') showToast(m, t); }
+  function _toast(m, type) { if (typeof showToast === 'function') showToast(m, 3000, type || ''); }
   function _root() { return document.getElementById('acervoStudioRoot'); }
 
   function _build() {
@@ -47,7 +48,10 @@
     _showLauncher(false);
     if (typeof acervoStudioRenderNav === 'function') acervoStudioRenderNav();
   }
-  function _close() {
+  async function _close() {
+    if (AXS.dirty && !(await _confirmDiscard())) return;
+    AXS.dirty = false;
+    AXS.editing = false;
     var root = _root();
     if (root) root.hidden = true;
     AXS.open = false;
@@ -79,6 +83,10 @@
     { key: 'inbox', ico: '📥', label: 'Inbox', tree: true }
   ];
 
+  var AXS_STATUSES = ['draft', 'ready', 'archived'];
+  var AXS_NATURES = ['context', 'knowledge', 'contracts', 'workflows', 'decisions',
+    'templates', 'tools', 'skills', 'persona', 'prompts', 'reflections'];
+
   async function _tree(scope, slug) {
     var url = '/api/acervo/x/tree?session_id=' + encodeURIComponent(_sid()) +
       '&scope=' + encodeURIComponent(scope) + '&depth=2' +
@@ -91,13 +99,17 @@
   }
 
   async function acervoStudioRenderNav() {
-    var nav = _root() && _root().querySelector('[data-axs="nav"]');
+    var root = _root();
+    var nav = root && root.querySelector('[data-axs="nav"]');
     if (!nav) return;
     if (!_sid()) { nav.innerHTML = '<div class="axs-empty">Sem sessão ativa.</div>'; return; }
     var html = '<div class="axs-sec">Acervo</div>';
-    // Inbox count badge (best-effort).
-    var inboxCount = 0;
-    try { inboxCount = (await _tree('inbox', '')).count || 0; } catch (e) {}
+    // Inbox count badge (best-effort). Fetched ONCE and passed through to
+    // acervoStudioSelectScope when inbox is the active scope (Phase-0 minor:
+    // the same tree was fetched twice).
+    var inboxData = null;
+    try { inboxData = await _tree('inbox', ''); } catch (e) { /* badge only */ }
+    var inboxCount = (inboxData && inboxData.count) || 0;
     SCOPES.forEach(function (s) {
       var on = AXS.scope === s.key ? ' on' : '';
       var badge = (s.key === 'inbox' && inboxCount) ?
@@ -112,12 +124,18 @@
         acervoStudioSelectScope(el.getAttribute('data-scope'), '');
       });
     });
-    if (AXS.scope) acervoStudioSelectScope(AXS.scope, AXS.slug);
+    if (AXS.scope) {
+      acervoStudioSelectScope(AXS.scope, AXS.slug,
+        AXS.scope === 'inbox' && !AXS.slug ? inboxData : null);
+    }
   }
 
-  async function acervoStudioSelectScope(scope, slug) {
+  async function acervoStudioSelectScope(scope, slug, prefetched) {
+    var root = _root();
+    if (!root) return;
     AXS.scope = scope; AXS.slug = slug || '';
-    var nav = _root().querySelector('[data-axs="nav"]');
+    var nav = root.querySelector('[data-axs="nav"]');
+    if (!nav) return;
     nav.querySelectorAll('.axs-ni').forEach(function (el) {
       el.classList.toggle('on', el.getAttribute('data-scope') === scope);
     });
@@ -126,7 +144,7 @@
     if (!sub) return;
     sub.innerHTML = '<div class="axs-empty">Carregando…</div>';
     var data;
-    try { data = await _tree(scope, slug); }
+    try { data = prefetched || await _tree(scope, slug); }
     catch (e) { sub.innerHTML = '<div class="axs-empty">Erro ao carregar.</div>'; return; }
     var nodes = data.nodes || [];
     if (!nodes.length) { sub.innerHTML = '<div class="axs-empty">Vazio.</div>'; return; }
@@ -146,7 +164,11 @@
         out += '<div class="axs-pi"><span class="st"></span>' + _esc(n.title) +
           ' · ' + _esc(n.status) + '</div>';
       } else if (n.type === 'artifact') {
-        out += '<div class="axs-pi">📦 ' + _esc(n.title || n.name) + '</div>';
+        out += '<div class="axs-pi" data-art="' + _esc(n.name) +
+          '" data-artkind="' + _esc(n.kind || '') +
+          '" data-artpath="' + _esc(n.rel_path) +
+          '" data-arttitle="' + _esc(n.title || n.name) + '">📦 ' +
+          _esc(n.title || n.name) + '</div>';
       }
     });
     sub.innerHTML = out;
@@ -161,11 +183,310 @@
           acervoStudioOpenPage(el.getAttribute('data-path'));
       });
     });
+    sub.querySelectorAll('[data-art]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        if (el.getAttribute('data-artkind') === 'dir') {
+          _openArtifact(el.getAttribute('data-art'), el.getAttribute('data-arttitle'));
+        } else if (typeof acervoStudioOpenPage === 'function') {
+          acervoStudioOpenPage(el.getAttribute('data-artpath'));
+        }
+      });
+    });
   }
   window.acervoStudioRenderNav = acervoStudioRenderNav;
   window.acervoStudioSelectScope = acervoStudioSelectScope;
 
   function _chip(label, cls) { return '<span class="' + (cls || '') + '">' + _esc(label) + '</span>'; }
+
+  function _detail(e) {
+    var m = e && e.message ? String(e.message) : '';
+    return m ? ' — ' + m : '';
+  }
+
+  async function _confirmDiscard() {
+    if (typeof showConfirmDialog === 'function') {
+      return await showConfirmDialog({
+        title: 'Descartar alterações?',
+        message: 'Há edições não salvas nesta página.',
+        confirmLabel: 'Descartar',
+        danger: true
+      });
+    }
+    return true;
+  }
+
+  function _actionsBar(p) {
+    var md = !!(p && p.editable);
+    var acts = '';
+    if (md) acts += '<button type="button" class="axs-act" data-axs-act="edit">✎ Editar</button>';
+    acts += '<button type="button" class="axs-act" data-axs-act="stage">⇪ Enviar ao chat</button>';
+    acts += '<button type="button" class="axs-act" data-axs-act="download">⬇ Baixar</button>';
+    if (md) acts += '<button type="button" class="axs-act" data-axs-act="more" ' +
+      'aria-haspopup="true" aria-label="Mais ações">⋯</button>';
+    return '<div class="axs-acts">' + acts + '</div>';
+  }
+
+  function _wireActs(reader) {
+    reader.querySelectorAll('[data-axs-act]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var act = b.getAttribute('data-axs-act');
+        if (act === 'edit') acervoStudioEdit();
+        else if (act === 'stage') acervoStudioStage();
+        else if (act === 'download') acervoStudioDownload();
+        else if (act === 'more') _toggleMenu(b);
+      });
+    });
+  }
+
+  function _downloadUrl(qs) {
+    return '/api/acervo/x/download?session_id=' + encodeURIComponent(_sid()) + '&' + qs;
+  }
+
+  function _triggerDownload(url) {
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  function acervoStudioDownload() {
+    if (AXS.artifactId) {
+      _triggerDownload(_downloadUrl('artifact_id=' + encodeURIComponent(AXS.artifactId)));
+      return;
+    }
+    if (!AXS.selectedPath) return;
+    _triggerDownload(_downloadUrl('path=' + encodeURIComponent(AXS.selectedPath)));
+  }
+  window.acervoStudioDownload = acervoStudioDownload;
+
+  async function acervoStudioStage() {
+    var relPath = AXS.selectedPath;
+    if (!relPath) { _toast('Abra uma página primeiro', 'error'); return; }
+    var r;
+    try {
+      r = await api('/api/acervo/x/stage', {
+        method: 'POST',
+        body: JSON.stringify({ session_id: _sid(), source: relPath })
+      });
+    } catch (e) {
+      _toast('Falha ao adicionar ao contexto' + _detail(e), 'error');
+      return;
+    }
+    if (r && r.path) {
+      if (typeof S !== 'undefined' && S) {
+        if (!Array.isArray(S.pendingContextAttachments)) S.pendingContextAttachments = [];
+        if (!S.pendingContextAttachments.some(function (a) { return a._ctxSource === relPath; })) {
+          S.pendingContextAttachments.push({
+            name: r.name, path: r.path, mime: r.mime, size: r.size,
+            is_image: !!r.is_image, _ctxSource: relPath
+          });
+        }
+      }
+      if (typeof renderStagedContextChips === 'function') renderStagedContextChips();
+      _toast('Adicionado ao contexto da próxima mensagem', 'success');
+    }
+  }
+  window.acervoStudioStage = acervoStudioStage;
+
+  function _openArtifact(id, title) {
+    var root = _root();
+    if (!root) return;
+    AXS.selectedPath = '';
+    AXS.page = null;
+    AXS.artifactId = id;
+    var reader = root.querySelector('[data-axs="reader"]');
+    reader.innerHTML =
+      '<div class="axs-crumb"><b>_artifacts</b> › ' + _esc(id) +
+      '  <div class="axs-acts"><button type="button" class="axs-act" data-axs-act="download">⬇ Baixar (zip)</button></div></div>' +
+      '<div class="axs-doc">' +
+      '  <h1 class="axs-title">📦 ' + _esc(title || id) + '</h1>' +
+      '  <div class="axs-empty">Pacote de artefato — o download inclui manifest.json, source/ e exports/.</div>' +
+      '</div>';
+    _wireActs(reader);
+  }
+
+  function acervoStudioEdit() {
+    var p = AXS.page;
+    var root = _root();
+    if (!p || !p.editable || !root) return;
+    AXS.editing = true;
+    var reader = root.querySelector('[data-axs="reader"]');
+    var fm = p.frontmatter || {};
+    var tagsCsv = Array.isArray(fm.tags) ? fm.tags.join(', ') : (fm.tags || '');
+    var curSt = (fm.status || '').trim();
+    var stInSet = AXS_STATUSES.indexOf(curSt) >= 0;
+    var stSel = (curSt && !stInSet
+        ? '<option value="" selected>' + _esc('(manter: ' + curSt + ')') + '</option>' : '')
+      + AXS_STATUSES.map(function (s) {
+          var sel = stInSet ? (curSt === s) : (!curSt && s === 'draft');
+          return '<option value="' + s + '"' + (sel ? ' selected' : '') + '>' + s + '</option>';
+        }).join('');
+    var natSel = '<option value="">—</option>' + AXS_NATURES.map(function (n) {
+      return '<option value="' + n + '"' +
+        ((fm.nature || '') === n ? ' selected' : '') + '>' + n + '</option>';
+    }).join('');
+    var perene = String(fm['class'] || '').toLowerCase().indexOf('peren') === 0;
+    reader.innerHTML =
+      '<div class="axs-crumb">✎ ' + _esc(p.rel_path) +
+      '  <div class="axs-acts">' +
+      '    <button type="button" class="axs-act axs-act-primary" data-axs-ed="save">Salvar</button>' +
+      '    <button type="button" class="axs-act" data-axs-ed="cancel">Cancelar</button>' +
+      '  </div></div>' +
+      '<div class="axs-doc axs-editor">' +
+      (perene ? '<div class="axs-warn">⚠ Página perene (class: perene) — edite com cuidado.</div>' : '') +
+      '  <label class="axs-field"><span>Título</span>' +
+      '    <input type="text" data-axs-fm="title" value="' + _esc(fm.title || '') + '"></label>' +
+      '  <div class="axs-frow">' +
+      '    <label class="axs-field"><span>Status</span><select data-axs-fm="status">' + stSel + '</select></label>' +
+      '    <label class="axs-field"><span>Natureza</span><select data-axs-fm="nature">' + natSel + '</select></label>' +
+      '  </div>' +
+      '  <label class="axs-field"><span>Tags (CSV)</span>' +
+      '    <input type="text" data-axs-fm="tags" value="' + _esc(tagsCsv) + '" placeholder="a, b, c"></label>' +
+      '  <label class="axs-field axs-fgrow"><span>Conteúdo</span>' +
+      '    <textarea data-axs-ed="body" spellcheck="false">' + _esc(p.body || '') + '</textarea></label>' +
+      '</div>';
+    var mark = function () { AXS.dirty = true; };
+    reader.querySelectorAll('[data-axs-fm],[data-axs-ed="body"]').forEach(function (el) {
+      el.addEventListener('input', mark);
+      el.addEventListener('change', mark);
+    });
+    reader.querySelector('[data-axs-ed="save"]').addEventListener('click', acervoStudioSave);
+    reader.querySelector('[data-axs-ed="cancel"]').addEventListener('click', async function () {
+      if (AXS.dirty && !(await _confirmDiscard())) return;
+      AXS.dirty = false;
+      AXS.editing = false;
+      acervoStudioOpenPage(p.rel_path);
+    });
+  }
+  window.acervoStudioEdit = acervoStudioEdit;
+
+  async function acervoStudioSave() {
+    var p = AXS.page;
+    var root = _root();
+    if (!p || !root) return;
+    var reader = root.querySelector('[data-axs="reader"]');
+    var fm = {};
+    reader.querySelectorAll('[data-axs-fm]').forEach(function (el) {
+      var k = el.getAttribute('data-axs-fm');
+      var v = el.value;
+      if (k === 'tags') {
+        fm.tags = String(v).split(',').map(function (t) { return t.trim(); }).filter(Boolean);
+      } else if (v !== '') {
+        fm[k] = v;
+      }
+    });
+    var bodyEl = reader.querySelector('[data-axs-ed="body"]');
+    var body = bodyEl ? bodyEl.value : (p.body || '');
+    var isPerene = p.frontmatter &&
+      String(p.frontmatter['class'] || '').toLowerCase().indexOf('peren') === 0;
+    if (isPerene && typeof showConfirmDialog === 'function') {
+      var ok = await showConfirmDialog({
+        title: 'Página perene',
+        message: 'Esta página é marcada como perene. Salvar mesmo assim?',
+        confirmLabel: 'Salvar'
+      });
+      if (!ok) return;
+    }
+    try {
+      await api('/api/acervo/x/save', {
+        method: 'POST',
+        body: JSON.stringify({ session_id: _sid(), path: p.rel_path, frontmatter: fm, body: body })
+      });
+    } catch (e) {
+      _toast('Falha ao salvar' + _detail(e), 'error');
+      return; // keep the editor open on error
+    }
+    AXS.dirty = false;
+    AXS.editing = false;
+    _toast('Página salva', 'success');
+    await acervoStudioOpenPage(p.rel_path);   // reload from disk (merged frontmatter)
+    acervoStudioSelectScope(AXS.scope, AXS.slug);  // refresh titles/status dots
+  }
+  window.acervoStudioSave = acervoStudioSave;
+
+  function _toggleMenu(anchor) {
+    var old = document.getElementById('axsMenu');
+    if (old) { old.remove(); return; }
+    var m = document.createElement('div');
+    m.id = 'axsMenu';
+    m.className = 'axs-menu';
+    m.innerHTML =
+      '<button type="button" data-axs-m="move">Mover / renomear…</button>' +
+      '<div class="axs-menu-sep"></div>' +
+      AXS_STATUSES.map(function (s) {
+        return '<button type="button" data-axs-m="st:' + s + '">Status: ' + s + '</button>';
+      }).join('');
+    document.body.appendChild(m);
+    var r = anchor.getBoundingClientRect();
+    m.style.top = (r.bottom + 4) + 'px';
+    m.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+    m.querySelectorAll('[data-axs-m]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        m.remove();
+        var v = b.getAttribute('data-axs-m');
+        if (v === 'move') acervoStudioMove();
+        else if (v.indexOf('st:') === 0) acervoStudioSetStatus(v.slice(3));
+      });
+    });
+    setTimeout(function () {
+      document.addEventListener('click', function h(ev) {
+        if (!m.contains(ev.target)) {
+          m.remove();
+          document.removeEventListener('click', h);
+        }
+      });
+    }, 0);
+  }
+
+  async function acervoStudioMove() {
+    var p = AXS.page;
+    if (!p || !p.rel_path) return;
+    var dest = (typeof showPromptDialog === 'function')
+      ? await showPromptDialog({
+        title: 'Mover / renomear',
+        message: 'Novo caminho (relativo ao acervo):',
+        defaultValue: p.rel_path,
+        confirmLabel: 'Mover'
+      }) : null;
+    if (dest == null) return;
+    dest = String(dest).trim();
+    if (!dest || dest === p.rel_path) return;
+    var r;
+    try {
+      r = await api('/api/acervo/x/move', {
+        method: 'POST',
+        body: JSON.stringify({ session_id: _sid(), path: p.rel_path, dest: dest })
+      });
+    } catch (e) {
+      _toast('Falha ao mover' + _detail(e), 'error');
+      return;
+    }
+    _toast('Movido', 'success');
+    var newRel = (r && r.rel_path) || dest;
+    await acervoStudioOpenPage(newRel);
+    acervoStudioSelectScope(AXS.scope, AXS.slug);
+  }
+  window.acervoStudioMove = acervoStudioMove;
+
+  async function acervoStudioSetStatus(status) {
+    var p = AXS.page;
+    if (!p || !p.rel_path) return;
+    try {
+      await api('/api/acervo/x/status', {
+        method: 'POST',
+        body: JSON.stringify({ session_id: _sid(), path: p.rel_path, status: status })
+      });
+    } catch (e) {
+      _toast('Falha ao atualizar status' + _detail(e), 'error');
+      return;
+    }
+    _toast('Status atualizado', 'success');
+    await acervoStudioOpenPage(p.rel_path);
+    acervoStudioSelectScope(AXS.scope, AXS.slug);
+  }
+  window.acervoStudioSetStatus = acervoStudioSetStatus;
 
   // If the body's first non-empty line is a top-level "# Heading" matching the page
   // title, drop that one line (title is already shown separately as .axs-title).
@@ -181,10 +502,16 @@
   }
 
   async function acervoStudioOpenPage(relPath) {
+    var root = _root();
+    if (!root) return;
+    if (AXS.dirty && !(await _confirmDiscard())) return;
+    AXS.dirty = false;
+    AXS.editing = false;
     AXS.selectedPath = relPath;
-    var reader = _root().querySelector('[data-axs="reader"]');
+    AXS.artifactId = '';
+    var reader = root.querySelector('[data-axs="reader"]');
     // Mark the active page in the nav — runs for both md and non-md branches.
-    var nav = _root() && _root().querySelector('[data-axs="nav"]');
+    var nav = root.querySelector('[data-axs="nav"]');
     if (nav) {
       nav.querySelectorAll('.axs-pi').forEach(function (el) {
         el.classList.toggle('on', el.getAttribute('data-path') === relPath);
@@ -202,15 +529,22 @@
     var crumb = relPath.split('/').map(function (s, i, a) {
       return i === a.length - 1 ? _esc(s) : '<b>' + _esc(s) + '</b>';
     }).join(' › ');
-    if (p && p.editable === false && p.raw_url) {
-      var rawUrl = p.raw_url + '&session_id=' + encodeURIComponent(_sid());
+    if (p && p.editable === false) {
+      AXS.page = null;
+      // Phase-0 minor fixed: build the raw URL client-side, fully encoded
+      // (p.raw_url already embeds session_id unencoded — don't reuse/append).
+      var rawUrl = '/api/acervo/x/raw?session_id=' + encodeURIComponent(_sid()) +
+        '&path=' + encodeURIComponent(relPath);
       var isImg = (p.mime || '').indexOf('image/') === 0;
       var view = isImg
         ? '<img class="axs-raw" src="' + _esc(rawUrl) + '" alt="' + _esc(relPath) + '">'
-        : '<iframe class="axs-raw" src="' + _esc(rawUrl) + '" sandbox></iframe>';
-      reader.innerHTML = '<div class="axs-crumb">' + crumb + '</div><div class="axs-doc">' + view + '</div>';
+        : '<iframe class="axs-raw" src="' + _esc(rawUrl) + '" sandbox title="' + _esc(relPath) + '"></iframe>';
+      reader.innerHTML = '<div class="axs-crumb">' + crumb + _actionsBar(p) + '</div>' +
+        '<div class="axs-doc">' + view + '</div>';
+      _wireActs(reader);
       return;
     }
+    AXS.page = p;
     var fm = (p && p.frontmatter) || {};
     var chips = '';
     if (fm.nature) chips += _chip(fm.nature);
@@ -224,18 +558,24 @@
     var body = _stripDupTitleH1(p.body || '', title);
     var bodyHtml = (typeof renderMd === 'function') ? renderMd(body) : _esc(body);
     reader.innerHTML =
-      '<div class="axs-crumb">' + crumb + '</div>' +
+      '<div class="axs-crumb">' + crumb + _actionsBar(p) + '</div>' +
       '<div class="axs-doc">' +
       '  <div class="axs-fm">' + chips + '</div>' +
       '  <h1 class="axs-title">' + _esc(title) + '</h1>' +
       '  <div class="axs-md">' + bodyHtml + '</div>' +
       '</div>';
+    _wireActs(reader);
   }
   window.acervoStudioOpenPage = acervoStudioOpenPage;
 
   async function acervoStudioSearch(q) {
+    var root = _root();
+    if (!root) return;
+    if (AXS.dirty && !(await _confirmDiscard())) return;
+    AXS.dirty = false;
+    AXS.editing = false;
     q = (q || '').trim();
-    var reader = _root().querySelector('[data-axs="reader"]');
+    var reader = root.querySelector('[data-axs="reader"]');
     if (!q) { reader.innerHTML = '<div class="axs-reader-empty">Digite um termo.</div>'; return; }
     reader.innerHTML = '<div class="axs-reader-empty">Buscando…</div>';
     var d;
@@ -255,7 +595,10 @@
     html += (d.truncated ? '<div class="axs-empty">Resultados truncados.</div>' : '') + '</div>';
     reader.innerHTML = html;
     reader.querySelectorAll('.axs-rescard').forEach(function (el) {
-      el.addEventListener('click', function () { acervoStudioOpenPage(el.getAttribute('data-path')); });
+      el.addEventListener('click', function () {
+        if (typeof acervoStudioOpenPage === 'function')
+          acervoStudioOpenPage(el.getAttribute('data-path'));
+      });
     });
   }
   window.acervoStudioSearch = acervoStudioSearch;
@@ -265,6 +608,10 @@
 
   // Expose module internals to later-task render functions in this IIFE.
   window.__AXS = { state: AXS, sid: _sid, esc: _esc, toast: _toast, root: _root };
+
+  window.addEventListener('beforeunload', function (e) {
+    if (AXS.open && AXS.dirty) { e.preventDefault(); e.returnValue = ''; return ''; }
+  });
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', _ensureLauncher);

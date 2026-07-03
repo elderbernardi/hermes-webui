@@ -224,6 +224,30 @@ def _node_for_page(routes, f: Path, root: Path, nature=None, scope=None):
     }
 
 
+def _micro_title(routes, d):
+    """Friendly microverse title, harmonized with MOD-008's
+    _handle_acervo_microverses: _meta/index.md ``title`` → microverso.yaml
+    ``name`` → humanized slug; strips the "Índice —"/"Index —" markers index
+    pages carry (Phase-0 minor: the two surfaces disagreed)."""
+    name = None
+    idx = d / "_meta" / "index.md"
+    if idx.is_file():
+        name = routes._read_frontmatter_meta(idx, ["title"]).get("title")
+    if not name:
+        yml = d / "microverso.yaml"
+        if yml.is_file():
+            name = routes._read_frontmatter_meta(yml, ["name"]).get("name")
+    if name:
+        name = re.sub(r'^(?:índice|indice|index)\s*[—\-:]\s*', '', name,
+                      flags=re.IGNORECASE)
+        name = re.sub(r'\s*[—\-:]\s*(?:índice|indice|index)$', '', name,
+                      flags=re.IGNORECASE)
+        name = name.strip()
+        if not name or name == d.name:
+            name = None
+    return name or routes._humanize_slug(d.name)
+
+
 def _micro_nodes(routes, root, slug, depth):
     """Tree nodes for the `micro` scope.
 
@@ -255,8 +279,7 @@ def _micro_nodes(routes, root, slug, depth):
                                  and not f.name.startswith(("_", ".")))
                 except OSError:
                     pass
-            title = (routes._read_frontmatter_title(d / "_meta" / "index.md")
-                     or routes._humanize_slug(d.name))
+            title = _micro_title(routes, d)
             nodes.append({
                 "type": "microverse",
                 "slug": d.name,
@@ -365,6 +388,7 @@ def handle_tree(handler, parsed):
                     "type": "artifact",
                     "rel_path": _rel_to_root(child, root),
                     "name": child.name,
+                    "kind": "dir" if child.is_dir() else "file",
                     "title": routes._humanize_slug(child.stem if child.is_file() else child.name),
                 })
         return routes.j(handler, {"scope": scope, "root": "_artifacts/items",
@@ -586,6 +610,23 @@ def handle_search(handler, parsed):
                               "truncated": truncated})
 
 
+def _reject_resolved_dot(routes, target):
+    """Reject a symlink-RESOLVED path that lands on a dot-prefixed component
+    (.quarantine/.git/...) even though _safe_acervo_path passed on the input
+    string. _safe_acervo_path only checks the literal input components, so a
+    clean-looking path that resolves through a symlink into e.g. .quarantine/
+    would otherwise slip through. Mirrors acervo_studio._resolved_dot_safe;
+    duplicated locally (not imported) to avoid a circular import, since
+    acervo_studio already imports from this module.
+    """
+    root_r = routes._acervo_root().resolve()
+    try:
+        parts = target.relative_to(root_r).parts
+    except ValueError:
+        return False
+    return not any(p.startswith(".") for p in parts)
+
+
 def handle_raw(handler, parsed):
     """GET /api/acervo/x/raw — stream a non-md acervo file (pdf/image) for preview."""
     import api.routes as routes
@@ -600,6 +641,8 @@ def handle_raw(handler, parsed):
     try:
         target = _safe_acervo_path(rel)
     except ValueError:
+        return routes.bad(handler, "invalid path", 400)
+    if not _reject_resolved_dot(routes, target):
         return routes.bad(handler, "invalid path", 400)
     if not target.is_file():
         return routes.j(handler, {"error": "file not found"}, status=404)
@@ -800,7 +843,10 @@ def handle_acervo_x_get(handler, parsed):
         return handle_search(handler, parsed)
     if path == "/api/acervo/x/raw":
         return handle_raw(handler, parsed)
-    return routes.bad(handler, "unknown acervo explorer endpoint", 404)
+    # MOD-010: delegate Studio-only sub-paths (x/download now; intake/publish/
+    # assist in later phases) before 404ing. Late import avoids a load cycle.
+    import api.acervo_studio as studio
+    return studio.handle_studio_get(handler, parsed)
 
 
 def handle_acervo_x_post(handler, body):
@@ -819,4 +865,5 @@ def handle_acervo_x_post(handler, body):
         return handle_tags(handler, body)
     if path == "/api/acervo/x/stage":
         return handle_stage(handler, body)
-    return routes.bad(handler, "unknown acervo explorer endpoint", 404)
+    import api.acervo_studio as studio
+    return studio.handle_studio_post(handler, body)
