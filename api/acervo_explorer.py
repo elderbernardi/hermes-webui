@@ -224,6 +224,106 @@ def _node_for_page(routes, f: Path, root: Path, nature=None, scope=None):
     }
 
 
+def _micro_nodes(routes, root, slug, depth):
+    """Tree nodes for the `micro` scope.
+
+    No slug -> one node per `micro/<slug>/` directory (skipping `_`/`.`-prefixed),
+    with a friendly title (from `_meta/index.md` if present, else humanized slug)
+    and a page count across its natures. With slug -> nature nodes + (depth>=2) page
+    nodes, exactly like the global/shared branch of handle_tree.
+    """
+    nodes = []
+    micro_dir = root / "micro"
+    if not slug:
+        if not micro_dir.is_dir():
+            return nodes
+        try:
+            dirs = sorted([d for d in micro_dir.iterdir()
+                           if d.is_dir() and not d.name.startswith(("_", "."))],
+                          key=lambda p: p.name)
+        except OSError:
+            return nodes
+        for d in dirs:
+            count = 0
+            for nat in routes._ACERVO_NATURES:
+                nd = d / nat
+                if not nd.is_dir():
+                    continue
+                try:
+                    count += sum(1 for f in nd.iterdir()
+                                 if f.is_file() and f.suffix.lower() == ".md"
+                                 and not f.name.startswith(("_", ".")))
+                except OSError:
+                    pass
+            title = (routes._read_frontmatter_title(d / "_meta" / "index.md")
+                     or routes._humanize_slug(d.name))
+            nodes.append({
+                "type": "microverse",
+                "slug": d.name,
+                "title": title,
+                "rel_path": _rel_to_root(d, root),
+                "count": count,
+            })
+        return nodes
+
+    try:
+        base = _safe_acervo_path("micro/" + slug)
+    except ValueError:
+        return nodes
+    if not base.is_dir():
+        return nodes
+    for nat in routes._ACERVO_NATURES:
+        nd = base / nat
+        if not nd.is_dir():
+            continue
+        try:
+            files = [f for f in nd.iterdir()
+                     if f.is_file() and f.suffix.lower() == ".md"
+                     and not f.name.startswith(("_", "."))]
+        except OSError:
+            files = []
+        nodes.append({"type": "nature", "name": nat,
+                      "rel_path": _rel_to_root(nd, root), "count": len(files)})
+        if depth >= 2:
+            for f in sorted(files, key=lambda p: p.name):
+                nodes.append(_node_for_page(routes, f, root, nature=nat, scope="micro"))
+    return nodes
+
+
+def _inbox_nodes(routes, root):
+    """Tree nodes for the `inbox` scope — one per `_inbox/incoming/<envelope>/`.
+
+    Read-only. Title/status come from the envelope's manifest.json when present
+    (Phase 0 does not extract or promote — that is Phase 2).
+    """
+    import json
+    nodes = []
+    inc = root / "_inbox" / "incoming"
+    if not inc.is_dir():
+        return nodes
+    try:
+        dirs = sorted([d for d in inc.iterdir()
+                       if d.is_dir() and not d.name.startswith(".")],
+                      key=lambda p: p.name, reverse=True)
+    except OSError:
+        return nodes
+    for d in dirs:
+        title = routes._humanize_slug(d.name)
+        status = "received"
+        mf = d / "manifest.json"
+        if mf.is_file():
+            try:
+                data = json.loads(mf.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    title = data.get("title") or data.get("friendly_name") or title
+                    status = data.get("status") or status
+            except (OSError, ValueError):
+                pass
+        nodes.append({"type": "intake", "id": d.name, "title": title,
+                      "status": status, "rel_path": _rel_to_root(d, root)})
+    return nodes
+
+
 def handle_tree(handler, parsed):
     """GET /api/acervo/x/tree — browse global/shared/macro + artifacts (SPEC §3.1)."""
     import api.routes as routes
@@ -234,8 +334,8 @@ def handle_tree(handler, parsed):
     if not routes._resolve_session_workspace(sid):
         return routes.bad(handler, "Session not found", 404)
     scope = (qs.get("scope", [""])[0] or "").strip()
-    if scope not in ("global", "shared", "macro", "artifacts"):
-        return routes.bad(handler, "scope must be one of: global, shared, macro, artifacts")
+    if scope not in ("global", "shared", "macro", "artifacts", "micro", "inbox"):
+        return routes.bad(handler, "scope must be one of: global, shared, macro, artifacts, micro, inbox")
     slug = (qs.get("slug", [""])[0] or "").strip()
     try:
         depth = int(qs.get("depth", ["1"])[0] or "1")
@@ -268,6 +368,17 @@ def handle_tree(handler, parsed):
                     "title": routes._humanize_slug(child.stem if child.is_file() else child.name),
                 })
         return routes.j(handler, {"scope": scope, "root": "_artifacts/items",
+                                  "nodes": nodes, "count": len(nodes)})
+
+    if scope == "micro":
+        nodes = _micro_nodes(routes, root, slug, depth)
+        return routes.j(handler, {"scope": scope,
+                                  "root": "micro" + ("/" + slug if slug else ""),
+                                  "nodes": nodes, "count": len(nodes)})
+
+    if scope == "inbox":
+        nodes = _inbox_nodes(routes, root)
+        return routes.j(handler, {"scope": scope, "root": "_inbox/incoming",
                                   "nodes": nodes, "count": len(nodes)})
 
     if scope == "macro":
