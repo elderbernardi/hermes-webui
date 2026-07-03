@@ -108,3 +108,5 @@
   text-align:left;color:var(--axs-ink);cursor:pointer;font:500 12px/1 var(--axs-sans);}
 .axs-menu button:hover{background:var(--axs-surf2);color:var(--axs-strong);}
 .axs-menu-sep{height:1px;background:var(--axs-line);margin:4px 2px;}
+.axs-sub{margin:1px 0 3px;}
+.axs-sub:empty{display:none;}

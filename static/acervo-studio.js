@@ -99,13 +99,17 @@
   }
 
   async function acervoStudioRenderNav() {
-    var nav = _root() && _root().querySelector('[data-axs="nav"]');
+    var root = _root();
+    var nav = root && root.querySelector('[data-axs="nav"]');
     if (!nav) return;
     if (!_sid()) { nav.innerHTML = '<div class="axs-empty">Sem sessão ativa.</div>'; return; }
     var html = '<div class="axs-sec">Acervo</div>';
-    // Inbox count badge (best-effort).
-    var inboxCount = 0;
-    try { inboxCount = (await _tree('inbox', '')).count || 0; } catch (e) {}
+    // Inbox count badge (best-effort). Fetched ONCE and passed through to
+    // acervoStudioSelectScope when inbox is the active scope (Phase-0 minor:
+    // the same tree was fetched twice).
+    var inboxData = null;
+    try { inboxData = await _tree('inbox', ''); } catch (e) { /* badge only */ }
+    var inboxCount = (inboxData && inboxData.count) || 0;
     SCOPES.forEach(function (s) {
       var on = AXS.scope === s.key ? ' on' : '';
       var badge = (s.key === 'inbox' && inboxCount) ?
@@ -120,12 +124,18 @@
         acervoStudioSelectScope(el.getAttribute('data-scope'), '');
       });
     });
-    if (AXS.scope) acervoStudioSelectScope(AXS.scope, AXS.slug);
+    if (AXS.scope) {
+      acervoStudioSelectScope(AXS.scope, AXS.slug,
+        AXS.scope === 'inbox' && !AXS.slug ? inboxData : null);
+    }
   }
 
-  async function acervoStudioSelectScope(scope, slug) {
+  async function acervoStudioSelectScope(scope, slug, prefetched) {
+    var root = _root();
+    if (!root) return;
     AXS.scope = scope; AXS.slug = slug || '';
-    var nav = _root().querySelector('[data-axs="nav"]');
+    var nav = root.querySelector('[data-axs="nav"]');
+    if (!nav) return;
     nav.querySelectorAll('.axs-ni').forEach(function (el) {
       el.classList.toggle('on', el.getAttribute('data-scope') === scope);
     });
@@ -134,7 +144,7 @@
     if (!sub) return;
     sub.innerHTML = '<div class="axs-empty">Carregando…</div>';
     var data;
-    try { data = await _tree(scope, slug); }
+    try { data = prefetched || await _tree(scope, slug); }
     catch (e) { sub.innerHTML = '<div class="axs-empty">Erro ao carregar.</div>'; return; }
     var nodes = data.nodes || [];
     if (!nodes.length) { sub.innerHTML = '<div class="axs-empty">Vazio.</div>'; return; }
@@ -555,8 +565,13 @@
   window.acervoStudioOpenPage = acervoStudioOpenPage;
 
   async function acervoStudioSearch(q) {
+    var root = _root();
+    if (!root) return;
+    if (AXS.dirty && !(await _confirmDiscard())) return;
+    AXS.dirty = false;
+    AXS.editing = false;
     q = (q || '').trim();
-    var reader = _root().querySelector('[data-axs="reader"]');
+    var reader = root.querySelector('[data-axs="reader"]');
     if (!q) { reader.innerHTML = '<div class="axs-reader-empty">Digite um termo.</div>'; return; }
     reader.innerHTML = '<div class="axs-reader-empty">Buscando…</div>';
     var d;
@@ -576,7 +591,10 @@
     html += (d.truncated ? '<div class="axs-empty">Resultados truncados.</div>' : '') + '</div>';
     reader.innerHTML = html;
     reader.querySelectorAll('.axs-rescard').forEach(function (el) {
-      el.addEventListener('click', function () { acervoStudioOpenPage(el.getAttribute('data-path')); });
+      el.addEventListener('click', function () {
+        if (typeof acervoStudioOpenPage === 'function')
+          acervoStudioOpenPage(el.getAttribute('data-path'));
+      });
     });
   }
   window.acervoStudioSearch = acervoStudioSearch;
