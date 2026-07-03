@@ -214,8 +214,10 @@
     var fm = (p && p.frontmatter) || {};
     var chips = '';
     if (fm.nature) chips += _chip(fm.nature);
-    if (fm['class']) chips += _chip('🔒 ' + fm['class'],
-      String(fm['class']).indexOf('peren') === 0 ? 'perene' : '');
+    if (fm['class']) {
+      var _isPerene = String(fm['class']).toLowerCase().indexOf('peren') === 0;
+      chips += _chip((_isPerene ? '🔒 ' : '') + fm['class'], _isPerene ? 'perene' : '');
+    }
     if (fm.status) chips += _chip('✓ ' + fm.status);
     (Array.isArray(fm.tags) ? fm.tags : []).forEach(function (t) { chips += _chip('#' + t); });
     var title = p.title || relPath;

@@ -65,3 +65,9 @@ def test_inbox_nodes_lists_incoming_envelopes(acervo):
     assert by_id["int_20260616_open-notebook"]["status"] == "received"
     # Bare envelope with no manifest still lists, with a defaulted status.
     assert by_id["int_20260701_bare"]["status"] == "received"
+
+
+@pytest.mark.parametrize("evil", ["../../etc", "../global", "..", "../../"])
+def test_micro_nodes_rejects_traversal_slug(acervo, evil):
+    # A slug that tries to escape the acervo root must yield nothing (no leak, no raise).
+    assert ax._micro_nodes(routes, acervo, evil, 2) == []

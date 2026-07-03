@@ -266,7 +266,10 @@ def _micro_nodes(routes, root, slug, depth):
             })
         return nodes
 
-    base = micro_dir / slug
+    try:
+        base = _safe_acervo_path("micro/" + slug)
+    except ValueError:
+        return nodes
     if not base.is_dir():
         return nodes
     for nat in routes._ACERVO_NATURES:
