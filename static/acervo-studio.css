@@ -81,3 +81,10 @@
 .axs-rescard:hover{border-color:var(--axs-acct);}
 .axs-rescard .rt{font:600 13px/1.3 var(--axs-serif);color:var(--axs-strong);}
 .axs-rescard .rm{font:400 11px/1.4 var(--axs-sans);color:var(--axs-mut);margin-top:3px;}
+.axs-acts{margin-left:auto;display:flex;gap:6px;align-items:center;}
+.axs-act{background:var(--axs-surf);border:1px solid var(--axs-bd2);border-radius:7px;
+  padding:4px 9px;color:var(--axs-ink);cursor:pointer;font:600 11px/1 var(--axs-sans);
+  white-space:nowrap;}
+.axs-act:hover{border-color:var(--axs-acct);color:var(--axs-strong);}
+.axs-act-primary{background:var(--axs-acc);border-color:var(--axs-acc);color:#fff;}
+.axs-act-primary:hover{color:#fff;filter:brightness(1.08);}

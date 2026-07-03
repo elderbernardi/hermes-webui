@@ -3,11 +3,12 @@
    renderMd/humanizeFilename. Prefix: acervoStudio* / AXS / .axs-*. */
 'use strict';
 (function () {
-  var AXS = { built: false, open: false, scope: 'micro', slug: '', selectedPath: '' };
+  var AXS = { built: false, open: false, scope: 'micro', slug: '', selectedPath: '',
+    page: null, editing: false, dirty: false, artifactId: '' };
 
   function _sid() { return (typeof S !== 'undefined' && S && S.session) ? S.session.session_id : ''; }
   function _esc(s) { return (typeof esc === 'function') ? esc(s) : String(s == null ? '' : s); }
-  function _toast(m, t) { if (typeof showToast === 'function') showToast(m, t); }
+  function _toast(m, type) { if (typeof showToast === 'function') showToast(m, 3000, type || ''); }
   function _root() { return document.getElementById('acervoStudioRoot'); }
 
   function _build() {
@@ -146,7 +147,11 @@
         out += '<div class="axs-pi"><span class="st"></span>' + _esc(n.title) +
           ' · ' + _esc(n.status) + '</div>';
       } else if (n.type === 'artifact') {
-        out += '<div class="axs-pi">📦 ' + _esc(n.title || n.name) + '</div>';
+        out += '<div class="axs-pi" data-art="' + _esc(n.name) +
+          '" data-artkind="' + _esc(n.kind || '') +
+          '" data-artpath="' + _esc(n.rel_path) +
+          '" data-arttitle="' + _esc(n.title || n.name) + '">📦 ' +
+          _esc(n.title || n.name) + '</div>';
       }
     });
     sub.innerHTML = out;
@@ -161,11 +166,123 @@
           acervoStudioOpenPage(el.getAttribute('data-path'));
       });
     });
+    sub.querySelectorAll('[data-art]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        if (el.getAttribute('data-artkind') === 'dir') {
+          _openArtifact(el.getAttribute('data-art'), el.getAttribute('data-arttitle'));
+        } else if (typeof acervoStudioOpenPage === 'function') {
+          acervoStudioOpenPage(el.getAttribute('data-artpath'));
+        }
+      });
+    });
   }
   window.acervoStudioRenderNav = acervoStudioRenderNav;
   window.acervoStudioSelectScope = acervoStudioSelectScope;
 
   function _chip(label, cls) { return '<span class="' + (cls || '') + '">' + _esc(label) + '</span>'; }
+
+  function _detail(e) {
+    var m = e && e.message ? String(e.message) : '';
+    return m ? ' — ' + m : '';
+  }
+
+  async function _confirmDiscard() {
+    if (typeof showConfirmDialog === 'function') {
+      return await showConfirmDialog({
+        title: 'Descartar alterações?',
+        message: 'Há edições não salvas nesta página.',
+        confirmLabel: 'Descartar',
+        danger: true
+      });
+    }
+    return true;
+  }
+
+  function _actionsBar(p) {
+    var acts = '';
+    acts += '<button type="button" class="axs-act" data-axs-act="stage">⇪ Enviar ao chat</button>';
+    acts += '<button type="button" class="axs-act" data-axs-act="download">⬇ Baixar</button>';
+    return '<div class="axs-acts">' + acts + '</div>';
+  }
+
+  function _wireActs(reader) {
+    reader.querySelectorAll('[data-axs-act]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var act = b.getAttribute('data-axs-act');
+        if (act === 'stage') acervoStudioStage();
+        else if (act === 'download') acervoStudioDownload();
+      });
+    });
+  }
+
+  function _downloadUrl(qs) {
+    return '/api/acervo/x/download?session_id=' + encodeURIComponent(_sid()) + '&' + qs;
+  }
+
+  function _triggerDownload(url) {
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  function acervoStudioDownload() {
+    if (AXS.artifactId) {
+      _triggerDownload(_downloadUrl('artifact_id=' + encodeURIComponent(AXS.artifactId)));
+      return;
+    }
+    if (!AXS.selectedPath) return;
+    _triggerDownload(_downloadUrl('path=' + encodeURIComponent(AXS.selectedPath)));
+  }
+  window.acervoStudioDownload = acervoStudioDownload;
+
+  async function acervoStudioStage() {
+    var relPath = AXS.selectedPath;
+    if (!relPath) { _toast('Abra uma página primeiro', 'error'); return; }
+    var r;
+    try {
+      r = await api('/api/acervo/x/stage', {
+        method: 'POST',
+        body: JSON.stringify({ session_id: _sid(), source: relPath })
+      });
+    } catch (e) {
+      _toast('Falha ao adicionar ao contexto' + _detail(e), 'error');
+      return;
+    }
+    if (r && r.path) {
+      if (typeof S !== 'undefined' && S) {
+        if (!Array.isArray(S.pendingContextAttachments)) S.pendingContextAttachments = [];
+        if (!S.pendingContextAttachments.some(function (a) { return a._ctxSource === relPath; })) {
+          S.pendingContextAttachments.push({
+            name: r.name, path: r.path, mime: r.mime, size: r.size,
+            is_image: !!r.is_image, _ctxSource: relPath
+          });
+        }
+      }
+      if (typeof renderStagedContextChips === 'function') renderStagedContextChips();
+      _toast('Adicionado ao contexto da próxima mensagem', 'success');
+    }
+  }
+  window.acervoStudioStage = acervoStudioStage;
+
+  function _openArtifact(id, title) {
+    var root = _root();
+    if (!root) return;
+    AXS.selectedPath = '';
+    AXS.page = null;
+    AXS.artifactId = id;
+    var reader = root.querySelector('[data-axs="reader"]');
+    reader.innerHTML =
+      '<div class="axs-crumb"><b>_artifacts</b> › ' + _esc(id) +
+      '  <div class="axs-acts"><button type="button" class="axs-act" data-axs-act="download">⬇ Baixar (zip)</button></div></div>' +
+      '<div class="axs-doc">' +
+      '  <h1 class="axs-title">📦 ' + _esc(title || id) + '</h1>' +
+      '  <div class="axs-empty">Pacote de artefato — o download inclui manifest.json, source/ e exports/.</div>' +
+      '</div>';
+    _wireActs(reader);
+  }
 
   // If the body's first non-empty line is a top-level "# Heading" matching the page
   // title, drop that one line (title is already shown separately as .axs-title).
@@ -181,10 +298,16 @@
   }
 
   async function acervoStudioOpenPage(relPath) {
+    var root = _root();
+    if (!root) return;
+    if (AXS.dirty && !(await _confirmDiscard())) return;
+    AXS.dirty = false;
+    AXS.editing = false;
     AXS.selectedPath = relPath;
-    var reader = _root().querySelector('[data-axs="reader"]');
+    AXS.artifactId = '';
+    var reader = root.querySelector('[data-axs="reader"]');
     // Mark the active page in the nav — runs for both md and non-md branches.
-    var nav = _root() && _root().querySelector('[data-axs="nav"]');
+    var nav = root.querySelector('[data-axs="nav"]');
     if (nav) {
       nav.querySelectorAll('.axs-pi').forEach(function (el) {
         el.classList.toggle('on', el.getAttribute('data-path') === relPath);
@@ -202,15 +325,22 @@
     var crumb = relPath.split('/').map(function (s, i, a) {
       return i === a.length - 1 ? _esc(s) : '<b>' + _esc(s) + '</b>';
     }).join(' › ');
-    if (p && p.editable === false && p.raw_url) {
-      var rawUrl = p.raw_url + '&session_id=' + encodeURIComponent(_sid());
+    if (p && p.editable === false) {
+      AXS.page = null;
+      // Phase-0 minor fixed: build the raw URL client-side, fully encoded
+      // (p.raw_url already embeds session_id unencoded — don't reuse/append).
+      var rawUrl = '/api/acervo/x/raw?session_id=' + encodeURIComponent(_sid()) +
+        '&path=' + encodeURIComponent(relPath);
       var isImg = (p.mime || '').indexOf('image/') === 0;
       var view = isImg
         ? '<img class="axs-raw" src="' + _esc(rawUrl) + '" alt="' + _esc(relPath) + '">'
-        : '<iframe class="axs-raw" src="' + _esc(rawUrl) + '" sandbox></iframe>';
-      reader.innerHTML = '<div class="axs-crumb">' + crumb + '</div><div class="axs-doc">' + view + '</div>';
+        : '<iframe class="axs-raw" src="' + _esc(rawUrl) + '" sandbox title="' + _esc(relPath) + '"></iframe>';
+      reader.innerHTML = '<div class="axs-crumb">' + crumb + _actionsBar(p) + '</div>' +
+        '<div class="axs-doc">' + view + '</div>';
+      _wireActs(reader);
       return;
     }
+    AXS.page = p;
     var fm = (p && p.frontmatter) || {};
     var chips = '';
     if (fm.nature) chips += _chip(fm.nature);
@@ -224,12 +354,13 @@
     var body = _stripDupTitleH1(p.body || '', title);
     var bodyHtml = (typeof renderMd === 'function') ? renderMd(body) : _esc(body);
     reader.innerHTML =
-      '<div class="axs-crumb">' + crumb + '</div>' +
+      '<div class="axs-crumb">' + crumb + _actionsBar(p) + '</div>' +
       '<div class="axs-doc">' +
       '  <div class="axs-fm">' + chips + '</div>' +
       '  <h1 class="axs-title">' + _esc(title) + '</h1>' +
       '  <div class="axs-md">' + bodyHtml + '</div>' +
       '</div>';
+    _wireActs(reader);
   }
   window.acervoStudioOpenPage = acervoStudioOpenPage;
 
