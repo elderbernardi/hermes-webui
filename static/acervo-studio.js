@@ -48,7 +48,10 @@
     _showLauncher(false);
     if (typeof acervoStudioRenderNav === 'function') acervoStudioRenderNav();
   }
-  function _close() {
+  async function _close() {
+    if (AXS.dirty && !(await _confirmDiscard())) return;
+    AXS.dirty = false;
+    AXS.editing = false;
     var root = _root();
     if (root) root.hidden = true;
     AXS.open = false;
@@ -79,6 +82,10 @@
     { key: 'artifacts', ico: '📦', label: 'Artefatos', tree: true },
     { key: 'inbox', ico: '📥', label: 'Inbox', tree: true }
   ];
+
+  var AXS_STATUSES = ['draft', 'ready', 'archived'];
+  var AXS_NATURES = ['context', 'knowledge', 'contracts', 'workflows', 'decisions',
+    'templates', 'tools', 'skills', 'persona', 'prompts', 'reflections'];
 
   async function _tree(scope, slug) {
     var url = '/api/acervo/x/tree?session_id=' + encodeURIComponent(_sid()) +
@@ -199,7 +206,9 @@
   }
 
   function _actionsBar(p) {
+    var md = !!(p && p.editable);
     var acts = '';
+    if (md) acts += '<button type="button" class="axs-act" data-axs-act="edit">✎ Editar</button>';
     acts += '<button type="button" class="axs-act" data-axs-act="stage">⇪ Enviar ao chat</button>';
     acts += '<button type="button" class="axs-act" data-axs-act="download">⬇ Baixar</button>';
     return '<div class="axs-acts">' + acts + '</div>';
@@ -209,7 +218,8 @@
     reader.querySelectorAll('[data-axs-act]').forEach(function (b) {
       b.addEventListener('click', function () {
         var act = b.getAttribute('data-axs-act');
-        if (act === 'stage') acervoStudioStage();
+        if (act === 'edit') acervoStudioEdit();
+        else if (act === 'stage') acervoStudioStage();
         else if (act === 'download') acervoStudioDownload();
       });
     });
@@ -283,6 +293,101 @@
       '</div>';
     _wireActs(reader);
   }
+
+  function acervoStudioEdit() {
+    var p = AXS.page;
+    var root = _root();
+    if (!p || !p.editable || !root) return;
+    AXS.editing = true;
+    var reader = root.querySelector('[data-axs="reader"]');
+    var fm = p.frontmatter || {};
+    var tagsCsv = Array.isArray(fm.tags) ? fm.tags.join(', ') : (fm.tags || '');
+    var stSel = AXS_STATUSES.map(function (s) {
+      return '<option value="' + s + '"' +
+        ((fm.status || 'draft') === s ? ' selected' : '') + '>' + s + '</option>';
+    }).join('');
+    var natSel = '<option value="">—</option>' + AXS_NATURES.map(function (n) {
+      return '<option value="' + n + '"' +
+        ((fm.nature || '') === n ? ' selected' : '') + '>' + n + '</option>';
+    }).join('');
+    var perene = String(fm['class'] || '').toLowerCase().indexOf('peren') === 0;
+    reader.innerHTML =
+      '<div class="axs-crumb">✎ ' + _esc(p.rel_path) +
+      '  <div class="axs-acts">' +
+      '    <button type="button" class="axs-act axs-act-primary" data-axs-ed="save">Salvar</button>' +
+      '    <button type="button" class="axs-act" data-axs-ed="cancel">Cancelar</button>' +
+      '  </div></div>' +
+      '<div class="axs-doc axs-editor">' +
+      (perene ? '<div class="axs-warn">⚠ Página perene (class: perene) — edite com cuidado.</div>' : '') +
+      '  <label class="axs-field"><span>Título</span>' +
+      '    <input type="text" data-axs-fm="title" value="' + _esc(fm.title || '') + '"></label>' +
+      '  <div class="axs-frow">' +
+      '    <label class="axs-field"><span>Status</span><select data-axs-fm="status">' + stSel + '</select></label>' +
+      '    <label class="axs-field"><span>Natureza</span><select data-axs-fm="nature">' + natSel + '</select></label>' +
+      '  </div>' +
+      '  <label class="axs-field"><span>Tags (CSV)</span>' +
+      '    <input type="text" data-axs-fm="tags" value="' + _esc(tagsCsv) + '" placeholder="a, b, c"></label>' +
+      '  <label class="axs-field axs-fgrow"><span>Conteúdo</span>' +
+      '    <textarea data-axs-ed="body" spellcheck="false">' + _esc(p.body || '') + '</textarea></label>' +
+      '</div>';
+    var mark = function () { AXS.dirty = true; };
+    reader.querySelectorAll('[data-axs-fm],[data-axs-ed="body"]').forEach(function (el) {
+      el.addEventListener('input', mark);
+      el.addEventListener('change', mark);
+    });
+    reader.querySelector('[data-axs-ed="save"]').addEventListener('click', acervoStudioSave);
+    reader.querySelector('[data-axs-ed="cancel"]').addEventListener('click', async function () {
+      if (AXS.dirty && !(await _confirmDiscard())) return;
+      AXS.dirty = false;
+      AXS.editing = false;
+      acervoStudioOpenPage(p.rel_path);
+    });
+  }
+  window.acervoStudioEdit = acervoStudioEdit;
+
+  async function acervoStudioSave() {
+    var p = AXS.page;
+    var root = _root();
+    if (!p || !root) return;
+    var reader = root.querySelector('[data-axs="reader"]');
+    var fm = {};
+    reader.querySelectorAll('[data-axs-fm]').forEach(function (el) {
+      var k = el.getAttribute('data-axs-fm');
+      var v = el.value;
+      if (k === 'tags') {
+        fm.tags = String(v).split(',').map(function (t) { return t.trim(); }).filter(Boolean);
+      } else if (v !== '') {
+        fm[k] = v;
+      }
+    });
+    var bodyEl = reader.querySelector('[data-axs-ed="body"]');
+    var body = bodyEl ? bodyEl.value : (p.body || '');
+    var isPerene = p.frontmatter &&
+      String(p.frontmatter['class'] || '').toLowerCase().indexOf('peren') === 0;
+    if (isPerene && typeof showConfirmDialog === 'function') {
+      var ok = await showConfirmDialog({
+        title: 'Página perene',
+        message: 'Esta página é marcada como perene. Salvar mesmo assim?',
+        confirmLabel: 'Salvar'
+      });
+      if (!ok) return;
+    }
+    try {
+      await api('/api/acervo/x/save', {
+        method: 'POST',
+        body: JSON.stringify({ session_id: _sid(), path: p.rel_path, frontmatter: fm, body: body })
+      });
+    } catch (e) {
+      _toast('Falha ao salvar' + _detail(e), 'error');
+      return; // keep the editor open on error
+    }
+    AXS.dirty = false;
+    AXS.editing = false;
+    _toast('Página salva', 'success');
+    await acervoStudioOpenPage(p.rel_path);   // reload from disk (merged frontmatter)
+    acervoStudioSelectScope(AXS.scope, AXS.slug);  // refresh titles/status dots
+  }
+  window.acervoStudioSave = acervoStudioSave;
 
   // If the body's first non-empty line is a top-level "# Heading" matching the page
   // title, drop that one line (title is already shown separately as .axs-title).
@@ -396,6 +501,10 @@
 
   // Expose module internals to later-task render functions in this IIFE.
   window.__AXS = { state: AXS, sid: _sid, esc: _esc, toast: _toast, root: _root };
+
+  window.addEventListener('beforeunload', function (e) {
+    if (AXS.open && AXS.dirty) { e.preventDefault(); e.returnValue = ''; return ''; }
+  });
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', _ensureLauncher);
