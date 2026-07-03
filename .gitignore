@@ -46,6 +46,8 @@ docs/*
 !docs/rfcs/**
 !docs/architecture/
 !docs/architecture/**
+!docs/acervo-studio/
+!docs/acervo-studio/**
 
 # Local-only AI assistant context — never committed even under docs/.
 docs/AGENTS.md
