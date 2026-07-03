@@ -224,6 +224,30 @@ def _node_for_page(routes, f: Path, root: Path, nature=None, scope=None):
     }
 
 
+def _micro_title(routes, d):
+    """Friendly microverse title, harmonized with MOD-008's
+    _handle_acervo_microverses: _meta/index.md ``title`` → microverso.yaml
+    ``name`` → humanized slug; strips the "Índice —"/"Index —" markers index
+    pages carry (Phase-0 minor: the two surfaces disagreed)."""
+    name = None
+    idx = d / "_meta" / "index.md"
+    if idx.is_file():
+        name = routes._read_frontmatter_meta(idx, ["title"]).get("title")
+    if not name:
+        yml = d / "microverso.yaml"
+        if yml.is_file():
+            name = routes._read_frontmatter_meta(yml, ["name"]).get("name")
+    if name:
+        name = re.sub(r'^(?:índice|indice|index)\s*[—\-:]\s*', '', name,
+                      flags=re.IGNORECASE)
+        name = re.sub(r'\s*[—\-:]\s*(?:índice|indice|index)$', '', name,
+                      flags=re.IGNORECASE)
+        name = name.strip()
+        if not name or name == d.name:
+            name = None
+    return name or routes._humanize_slug(d.name)
+
+
 def _micro_nodes(routes, root, slug, depth):
     """Tree nodes for the `micro` scope.
 
@@ -255,8 +279,7 @@ def _micro_nodes(routes, root, slug, depth):
                                  and not f.name.startswith(("_", ".")))
                 except OSError:
                     pass
-            title = (routes._read_frontmatter_title(d / "_meta" / "index.md")
-                     or routes._humanize_slug(d.name))
+            title = _micro_title(routes, d)
             nodes.append({
                 "type": "microverse",
                 "slug": d.name,

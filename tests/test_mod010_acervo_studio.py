@@ -293,3 +293,39 @@ def test_download_symlinked_artifact_dir_blocked(acervo, session_ok, jcap):
     studio.handle_download(h, _get(
         "/api/acervo/x/download?session_id=sid1&artifact_id=evil"))
     assert jcap["status"] == 400
+
+
+# ── Phase 1: Phase-0 Minors — _micro_title harmonization + tree dispatch ───
+
+def test_micro_title_strips_indice_marker(acervo):
+    _w(acervo, "micro/comercial/_meta/index.md",
+       "---\ntitle: Índice — Comercial\n---\n\nx\n")
+    nodes = ax._micro_nodes(routes, acervo, "", 1)
+    by_slug = {n["slug"]: n for n in nodes}
+    assert by_slug["comercial"]["title"] == "Comercial"
+
+
+def test_micro_title_falls_back_to_microverso_yaml(acervo):
+    (acervo / "micro" / "vendas-b2b" / "knowledge").mkdir(parents=True)
+    (acervo / "micro" / "vendas-b2b" / "microverso.yaml").write_text(
+        "name: Vendas B2B\ntype: dominio\n", encoding="utf-8")
+    nodes = ax._micro_nodes(routes, acervo, "", 1)
+    by_slug = {n["slug"]: n for n in nodes}
+    assert by_slug["vendas-b2b"]["title"] == "Vendas B2B"
+
+
+def test_micro_title_humanizes_when_no_metadata(acervo):
+    (acervo / "micro" / "sales-ai" / "knowledge").mkdir(parents=True)
+    nodes = ax._micro_nodes(routes, acervo, "", 1)
+    by_slug = {n["slug"]: n for n in nodes}
+    assert by_slug["sales-ai"]["title"] == "Sales ai"
+
+
+def test_handle_tree_http_dispatch_micro_scope(acervo, session_ok, jcap):
+    _w(acervo, "micro/comercial/knowledge/precificacao.md")
+    h = _Handler()
+    ax.handle_acervo_x_get(h, _get(
+        "/api/acervo/x/tree?session_id=sid1&scope=micro&depth=1"))
+    assert jcap["obj"]["scope"] == "micro"
+    slugs = [n["slug"] for n in jcap["obj"]["nodes"] if n["type"] == "microverse"]
+    assert "comercial" in slugs
