@@ -211,6 +211,8 @@
     if (md) acts += '<button type="button" class="axs-act" data-axs-act="edit">✎ Editar</button>';
     acts += '<button type="button" class="axs-act" data-axs-act="stage">⇪ Enviar ao chat</button>';
     acts += '<button type="button" class="axs-act" data-axs-act="download">⬇ Baixar</button>';
+    if (md) acts += '<button type="button" class="axs-act" data-axs-act="more" ' +
+      'aria-haspopup="true" aria-label="Mais ações">⋯</button>';
     return '<div class="axs-acts">' + acts + '</div>';
   }
 
@@ -221,6 +223,7 @@
         if (act === 'edit') acervoStudioEdit();
         else if (act === 'stage') acervoStudioStage();
         else if (act === 'download') acervoStudioDownload();
+        else if (act === 'more') _toggleMenu(b);
       });
     });
   }
@@ -388,6 +391,88 @@
     acervoStudioSelectScope(AXS.scope, AXS.slug);  // refresh titles/status dots
   }
   window.acervoStudioSave = acervoStudioSave;
+
+  function _toggleMenu(anchor) {
+    var old = document.getElementById('axsMenu');
+    if (old) { old.remove(); return; }
+    var m = document.createElement('div');
+    m.id = 'axsMenu';
+    m.className = 'axs-menu';
+    m.innerHTML =
+      '<button type="button" data-axs-m="move">Mover / renomear…</button>' +
+      '<div class="axs-menu-sep"></div>' +
+      AXS_STATUSES.map(function (s) {
+        return '<button type="button" data-axs-m="st:' + s + '">Status: ' + s + '</button>';
+      }).join('');
+    document.body.appendChild(m);
+    var r = anchor.getBoundingClientRect();
+    m.style.top = (r.bottom + 4) + 'px';
+    m.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+    m.querySelectorAll('[data-axs-m]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        m.remove();
+        var v = b.getAttribute('data-axs-m');
+        if (v === 'move') acervoStudioMove();
+        else if (v.indexOf('st:') === 0) acervoStudioSetStatus(v.slice(3));
+      });
+    });
+    setTimeout(function () {
+      document.addEventListener('click', function h(ev) {
+        if (!m.contains(ev.target)) {
+          m.remove();
+          document.removeEventListener('click', h);
+        }
+      });
+    }, 0);
+  }
+
+  async function acervoStudioMove() {
+    var p = AXS.page;
+    if (!p || !p.rel_path) return;
+    var dest = (typeof showPromptDialog === 'function')
+      ? await showPromptDialog({
+        title: 'Mover / renomear',
+        message: 'Novo caminho (relativo ao acervo):',
+        defaultValue: p.rel_path,
+        confirmLabel: 'Mover'
+      }) : null;
+    if (dest == null) return;
+    dest = String(dest).trim();
+    if (!dest || dest === p.rel_path) return;
+    var r;
+    try {
+      r = await api('/api/acervo/x/move', {
+        method: 'POST',
+        body: JSON.stringify({ session_id: _sid(), path: p.rel_path, dest: dest })
+      });
+    } catch (e) {
+      _toast('Falha ao mover' + _detail(e), 'error');
+      return;
+    }
+    _toast('Movido', 'success');
+    var newRel = (r && r.rel_path) || dest;
+    await acervoStudioOpenPage(newRel);
+    acervoStudioSelectScope(AXS.scope, AXS.slug);
+  }
+  window.acervoStudioMove = acervoStudioMove;
+
+  async function acervoStudioSetStatus(status) {
+    var p = AXS.page;
+    if (!p || !p.rel_path) return;
+    try {
+      await api('/api/acervo/x/status', {
+        method: 'POST',
+        body: JSON.stringify({ session_id: _sid(), path: p.rel_path, status: status })
+      });
+    } catch (e) {
+      _toast('Falha ao atualizar status' + _detail(e), 'error');
+      return;
+    }
+    _toast('Status atualizado', 'success');
+    await acervoStudioOpenPage(p.rel_path);
+    acervoStudioSelectScope(AXS.scope, AXS.slug);
+  }
+  window.acervoStudioSetStatus = acervoStudioSetStatus;
 
   // If the body's first non-empty line is a top-level "# Heading" matching the page
   // title, drop that one line (title is already shown separately as .axs-title).

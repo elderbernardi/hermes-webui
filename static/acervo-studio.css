@@ -101,3 +101,10 @@
 .axs-frow{display:flex;gap:10px;}
 .axs-frow .axs-field{flex:1;}
 .axs-fgrow{flex:1;}
+.axs-menu{position:fixed;z-index:1300;background:var(--axs-surf);border:1px solid var(--axs-bd2);
+  border-radius:9px;padding:4px;box-shadow:0 10px 26px -8px rgba(0,0,0,.45);
+  display:flex;flex-direction:column;min-width:190px;}
+.axs-menu button{background:none;border:none;border-radius:6px;padding:7px 10px;
+  text-align:left;color:var(--axs-ink);cursor:pointer;font:500 12px/1 var(--axs-sans);}
+.axs-menu button:hover{background:var(--axs-surf2);color:var(--axs-strong);}
+.axs-menu-sep{height:1px;background:var(--axs-line);margin:4px 2px;}
