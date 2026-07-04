@@ -11,6 +11,31 @@
   function _toast(m, type) { if (typeof showToast === 'function') showToast(m, 3000, type || ''); }
   function _root() { return document.getElementById('acervoStudioRoot'); }
 
+  // If the Studio is opened with no active chat session, transparently create
+  // and bind one (mirrors ui.js promptNewFile/promptNewFolder) so the acervo is
+  // browsable standalone. The backend auth gate is UNCHANGED — a real session
+  // still exists; this only spares the user from opening a chat first. All app
+  // globals are typeof-guarded; on failure (e.g. session API unreachable) the
+  // caller falls back to the "Sem sessão ativa." empty state.
+  async function _ensureSession() {
+    if (_sid()) return true;
+    if (typeof S === 'undefined' || !S || typeof api !== 'function') return false;
+    var body = {};
+    if (typeof S._profileDefaultWorkspace === 'string' && S._profileDefaultWorkspace) {
+      body.workspace = S._profileDefaultWorkspace;
+    }
+    var r;
+    try { r = await api('/api/session/new', { method: 'POST', body: JSON.stringify(body) }); }
+    catch (e) { return false; }
+    if (!r || !r.session) return false;
+    S.session = r.session;
+    S.messages = [];
+    if (typeof syncTopbar === 'function') { try { syncTopbar(); } catch (e) { /* shell refresh best-effort */ } }
+    if (typeof renderMessages === 'function') { try { renderMessages(); } catch (e) { /* shell refresh best-effort */ } }
+    if (typeof renderSessionList === 'function') { try { await renderSessionList(); } catch (e) { /* shell refresh best-effort */ } }
+    return true;
+  }
+
   function _build() {
     if (AXS.built) return;
     var root = _root();
@@ -102,6 +127,10 @@
     var root = _root();
     var nav = root && root.querySelector('[data-axs="nav"]');
     if (!nav) return;
+    if (!_sid()) {
+      nav.innerHTML = '<div class="axs-empty">Preparando sessão…</div>';
+      await _ensureSession();
+    }
     if (!_sid()) { nav.innerHTML = '<div class="axs-empty">Sem sessão ativa.</div>'; return; }
     var html = '<div class="axs-sec">Acervo</div>';
     // Inbox count badge (best-effort). Fetched ONCE and passed through to
