@@ -207,3 +207,86 @@ Cherry-pick de performance, validado por testes.
 
 > **Promoção (local):** Fase 1 e Acervo UX **mescladas em `exocortex/stable`** (merges `--no-ff`); Fase 2 mesclada em seguida. **Nada foi pushado para `origin` nem reiniciado em produção (porta 8787).** Atualizar a linha "Base atual" e push/restart ficam para uma janela de promoção dedicada.
 
+---
+
+## HW-1 — Estratégia de sync com upstream (reauditoria 2026-07-10)
+
+> Reauditoria pedida pelo owner ("aderir melhor ao upstream do fork, mantendo o
+> acervo o mais independente possível"), a ser feita **antes** do passe final de
+> validação human+agente. **Esta seção é uma DECISÃO DE ESTRATÉGIA aguardando
+> sign-off do owner** — nada foi executado; a sincronização em si é uma sessão
+> própria de risco sobre uma superfície de PRODUÇÃO AO VIVO (8787 serve o acervo
+> real com escrita).
+
+### Divergência atual (mudou muito desde 2026-06-23)
+
+| Métrica | 2026-06-23 | **2026-07-10** |
+|---|---|---|
+| Base (merge-base) | `v0.51.448` (`32458c44`) | `v0.51.448` — **inalterada** |
+| Upstream HEAD | `v0.51.607` | **`exp-v0.52.26`** (`157714a1`) |
+| À frente / atrás | 18 / **607** | 77 / **2681** |
+| `api/routes.py` (upstream desde a base) | +3.427 | **+8.413 / −871** |
+| `static/index.html` (upstream desde a base) | +143 | +300 / −90 |
+
+O cherry-pick incremental **não está fechando o gap** — o atraso quase quadruplicou
+(607 → 2681) em ~1 mês, e o upstream cruzou uma minor (`v0.51` → `v0.52`).
+
+### Achado decisivo — a superfície de conflito do fork é 100% aditiva e centrada no acervo
+
+Medindo o lado do **fork** nos arquivos compartilhados (o que um sync teria de re-aplicar):
+
+- `api/routes.py`: fork **+837 / −13**. Dessas, **~627 linhas** são um bloco único de
+  `def _handle_acervo_*` / `_handle_artifact_*` / `_acervo_root` / `_normalize_artifact`
+  (backend do **MOD-007/008** *inlined* em routes.py, apendado após `_handle_folder_download`)
+  — **não editam lógica do upstream, apenas adicionam**. O resto são ganchos pequenos
+  (wrapper do fix de credenciais #3961 ~9 linhas; linhas de dispatch dos MODs).
+- `static/index.html`: fork **+26 / −37** (régua de abas + includes do acervo).
+- Arquivos **fork-owned do acervo** (`api/acervo_explorer.py`, `api/acervo_studio.py`,
+  `static/acervo-{explorer,studio}.{js,css}`): **ausentes no upstream** → **zero conflito**.
+
+Ou seja: **nenhum commit do fork reescreve o upstream** — tudo é acréscimo isolável.
+Isso torna uma **re-fundação limpa** viável, e é o que melhor honra o objetivo do owner.
+
+### Três estratégias
+
+**A — Cherry-pick incremental contínuo (status quo, comprovado).**
+Puxar correções pontuais sobre `exocortex/stable`. Baixo risco por item; **não fecha o
+gap** (base continua v0.51.448, atraso volta a crescer); triar 2681+ commits a cada
+janela fica cada vez mais caro. Bom só para *hotfixes* críticos.
+
+**B — Merge amplo `upstream/master` → `exocortex/stable` (in-place).**
+Um `git merge`. Fecha o gap, mas concentra um conflito **grande** em routes.py (fork
++837 aditivas × upstream +8.413/−871, arquivo de ~18k linhas) + risco difuso em
+style.css/ui.js/panels.js/sessions.js. O modo de falha "interleaving" já mordeu antes
+(gotcha 2026-06-23: quebrou `_load_yaml_config_file_raw`). Regressão sobre produção ao
+vivo. Esforço multi-dia, risco difuso e difícil de revisar.
+
+**C — Re-fundação limpa da camada de customização (RECOMENDADA).**
+Nova branch a partir do `upstream/master` atual; re-aplicar **só** a camada do fork:
+1. Copiar os 6 arquivos fork-owned do acervo (aplicam limpos — ausentes no upstream).
+2. **Extrair** o bloco MOD-007/008 de routes.py para um módulo novo (ex.: `api/acervo_tab.py`)
+   e re-plugar pelo mesmo padrão de prefix-dispatch → **zera a superfície em routes.py**.
+3. Re-aplicar MOD-001..006 (skin/rebrand/i18n: registry em config.py, bloco em style.css,
+   locales, shell em index.html) pontualmente.
+4. Triar os cherry-picks de segurança: #3961/#4544 provavelmente **já entrou no upstream
+   atual** → dropa; caso contrário, re-aplicar.
+5. Re-verificar: suíte pytest completa + `lint:runtime` + smoke ao vivo do acervo em 8787.
+
+Prós: fecha o gap de verdade; risco **concentrado e revisável** (a camada do fork, não
+2681 commits de merge); leva ao limite a filosofia do RFC "isolation + near-zero upstream
+touch" e **reduz a superfície futura** (MOD-007/008 vira módulo). Contras: reescreve a
+linhagem de `exocortex/stable` (é publicada → exige branch v2 + push coordenado); exige
+re-verificação completa; tem o trabalho de extração do MOD-007/008.
+
+### Recomendação
+
+**Estratégia C** como direção — é a única que realmente "adere melhor ao upstream" e
+ainda deixa o acervo mais independente. **Interino, independente da escolha:** rodar uma
+triagem de segurança dos 2681 commits e cherry-pickar só *hotfixes* críticos (Estratégia
+A) já, para não ficar exposto enquanto a re-fundação é agendada.
+
+**Decisão do owner necessária antes de executar:** (1) A, B ou C; (2) se C, aprovar a
+extração do MOD-007/008 para módulo e a criação de `exocortex/stable` v2; (3) janela —
+o owner quer HW-1 **antes** do passe final de validação, e produção ao vivo (8787) está
+em jogo.
+
