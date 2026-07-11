@@ -220,6 +220,11 @@
           acervoStudioOpenPage(el.getAttribute('data-path'));
       });
     });
+    sub.querySelectorAll('[data-intake]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        acervoStudioOpenEnvelope(el.getAttribute('data-intake'));
+      });
+    });
     sub.querySelectorAll('[data-art]').forEach(function (el) {
       el.addEventListener('click', function () {
         if (el.getAttribute('data-artkind') === 'dir') {
@@ -639,6 +644,51 @@
     });
   }
   window.acervoStudioSearch = acervoStudioSearch;
+
+  // ── Phase 2a: inbox envelope detail ──────────────────────────────────────
+  async function acervoStudioOpenEnvelope(iid) {
+    var root = _root();
+    var reader = root && root.querySelector('[data-axs="reader"]');
+    if (!reader) return;
+    AXS.selectedPath = ''; AXS.page = null; AXS.artifactId = '';
+    reader.innerHTML = '<div class="axs-reader-empty">Carregando…</div>';
+    var d;
+    try {
+      d = await api('/api/acervo/x/intake/item?session_id=' + encodeURIComponent(_sid()) +
+        '&id=' + encodeURIComponent(iid));
+    } catch (e) { reader.innerHTML = '<div class="axs-reader-empty">Erro ao abrir o envelope.</div>'; return; }
+    var env = (d && d.envelope) || {};
+    var chips = _chip('📥 ' + (env.content_type || 'intake')) + _chip('✓ ' + (env.status || 'received'));
+    var caption = env.user_caption || env.original_filename || env.intake_id || iid;
+    var files = env.files || [];
+    var body = '';
+    // Preview the first original file inline (md rendered; else sandboxed iframe/img).
+    if (files.length) {
+      var rawUrl = '/api/acervo/x/raw?session_id=' + encodeURIComponent(_sid()) +
+        '&path=' + encodeURIComponent('_inbox/incoming/' + iid + '/' + files[0]);
+      if (/\.(md|txt)$/i.test(files[0])) {
+        var txt = '';
+        try { var r = await fetch(rawUrl); txt = await r.text(); } catch (e) { txt = ''; }
+        body = '<div class="axs-md">' +
+          ((typeof renderMd === 'function') ? renderMd(txt) : _esc(txt)) + '</div>';
+      } else if (env.content_type === 'image') {
+        body = '<img class="axs-raw" src="' + _esc(rawUrl) + '" alt="' + _esc(files[0]) + '">';
+      } else {
+        body = '<iframe class="axs-raw" src="' + _esc(rawUrl) + '" sandbox title="' + _esc(files[0]) + '"></iframe>';
+      }
+    }
+    var fileList = files.map(function (f) { return '<li>' + _esc(f) + '</li>'; }).join('');
+    reader.innerHTML =
+      '<div class="axs-crumb"><b>📥 Inbox</b> › ' + _esc(env.intake_id || iid) + '</div>' +
+      '<div class="axs-doc axs-env">' +
+      '  <div class="axs-fm">' + chips + '</div>' +
+      '  <h1 class="axs-title">' + _esc(caption) + '</h1>' +
+      (fileList ? '<ul class="axs-env-files">' + fileList + '</ul>' : '') +
+      body +
+      '  <div class="axs-env-note">Aguardando triagem (Fase 2b). Nada foi escrito na memória semântica.</div>' +
+      '</div>';
+  }
+  window.acervoStudioOpenEnvelope = acervoStudioOpenEnvelope;
 
   // ── Phase 2a: intake capture ─────────────────────────────────────────────
   function _readFileB64(file) {
