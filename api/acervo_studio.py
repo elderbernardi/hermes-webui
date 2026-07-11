@@ -371,11 +371,46 @@ def handle_intake_create(handler, body, kind):
                               "manifest": manifest})
 
 
+def handle_intake_list(handler, parsed):
+    """GET /api/acervo/x/intake — list inbox envelopes."""
+    import api.routes as routes
+    qs = parse_qs(parsed.query)
+    sid = (qs.get("session_id", [""])[0] or "").strip()
+    if not sid:
+        return routes.bad(handler, "session_id is required")
+    if not routes._resolve_session_workspace(sid):
+        return routes.bad(handler, "Session not found", 404)
+    items = _list_envelopes(routes._acervo_root())
+    return routes.j(handler, {"items": items, "count": len(items)})
+
+
+def handle_intake_detail(handler, parsed):
+    """GET /api/acervo/x/intake/item?id=<iid> — one envelope's manifest + files."""
+    import api.routes as routes
+    qs = parse_qs(parsed.query)
+    sid = (qs.get("session_id", [""])[0] or "").strip()
+    if not sid:
+        return routes.bad(handler, "session_id is required")
+    if not routes._resolve_session_workspace(sid):
+        return routes.bad(handler, "Session not found", 404)
+    iid = (qs.get("id", [""])[0] or "").strip()
+    if not _valid_intake_id(iid):
+        return routes.bad(handler, "invalid intake id")
+    env = _read_envelope(routes._acervo_root(), iid)
+    if env is None:
+        return routes.j(handler, {"error": "envelope not found"}, status=404)
+    return routes.j(handler, {"envelope": env})
+
+
 # region: dispatchers (delegation targets of the MOD-009 fallbacks)
 
 def handle_studio_get(handler, parsed):
     """Route Studio GET sub-paths under /api/acervo/x/ (delegated by MOD-009)."""
     import api.routes as routes
+    if parsed.path == "/api/acervo/x/intake":
+        return handle_intake_list(handler, parsed)
+    if parsed.path == "/api/acervo/x/intake/item":
+        return handle_intake_detail(handler, parsed)
     if parsed.path == "/api/acervo/x/download":
         return handle_download(handler, parsed)
     return routes.bad(handler, "unknown acervo explorer endpoint", 404)

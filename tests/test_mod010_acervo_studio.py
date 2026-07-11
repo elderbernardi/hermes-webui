@@ -474,3 +474,46 @@ def test_intake_bad_base64_rejected(acervo, session_ok, jcap):
     studio.handle_studio_post(h, {"session_id": "sid1", "filename": "x.bin",
                                   "content_b64": "!!!not base64!!!"})
     assert jcap["status"] == 400
+
+
+# ── Phase 2a T3: intake list + detail GET routes ───────────────────────────
+
+def test_intake_list_route(acervo, session_ok, jcap):
+    studio._write_envelope(acervo, content_type="text", caption="alpha",
+                           filename="", mime="", payload=b"a", session_id="s")
+    studio._write_envelope(acervo, content_type="link", caption="beta",
+                           filename="", mime="", payload=b"http://b", session_id="s")
+    h = _Handler("/api/acervo/x/intake")
+    studio.handle_studio_get(h, _get("/api/acervo/x/intake?session_id=sid1"))
+    assert jcap["status"] == 200
+    assert jcap["obj"]["count"] == 2
+    assert {i["title"] for i in jcap["obj"]["items"]} == {"alpha", "beta"}
+
+
+def test_intake_detail_route(acervo, session_ok, jcap):
+    m = studio._write_envelope(acervo, content_type="text", caption="alpha",
+                               filename="", mime="", payload=b"hello", session_id="s")
+    h = _Handler("/api/acervo/x/intake/item")
+    studio.handle_studio_get(h, _get("/api/acervo/x/intake/item?session_id=sid1&id=" + m["intake_id"]))
+    assert jcap["status"] == 200
+    assert jcap["obj"]["envelope"]["intake_id"] == m["intake_id"]
+    assert "original/note.md" in jcap["obj"]["envelope"]["files"]
+
+
+def test_intake_detail_missing_404(acervo, session_ok, jcap):
+    h = _Handler("/api/acervo/x/intake/item")
+    studio.handle_studio_get(h, _get("/api/acervo/x/intake/item?session_id=sid1&id=int_20990101_000000_nope"))
+    assert jcap["status"] == 404
+
+
+def test_intake_detail_rejects_bad_id(acervo, session_ok, jcap):
+    h = _Handler("/api/acervo/x/intake/item")
+    studio.handle_studio_get(h, _get("/api/acervo/x/intake/item?session_id=sid1&id=../../etc"))
+    assert jcap["status"] in (400, 404)
+
+
+def test_get_dispatcher_delegates_intake_list(acervo, session_ok, jcap):
+    h = _Handler("/api/acervo/x/intake")
+    ax.handle_acervo_x_get(h, _get("/api/acervo/x/intake?session_id=sid1"))
+    assert jcap["status"] == 200
+    assert "items" in jcap["obj"]
