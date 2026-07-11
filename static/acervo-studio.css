@@ -110,3 +110,13 @@
 .axs-menu-sep{height:1px;background:var(--axs-line);margin:4px 2px;}
 .axs-sub{margin:1px 0 3px;}
 .axs-sub:empty{display:none;}
+
+/* Phase 2a: intake capture */
+.axs-cap-tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+.axs-cap-tabs button { padding: 4px 12px; border-radius: 6px; border: 1px solid var(--axs-border, #3a3a3a); background: transparent; color: inherit; cursor: pointer; }
+.axs-cap-tabs button.on { background: var(--axs-accent, #4a7dff); color: #fff; border-color: transparent; }
+.axs-cap textarea { min-height: 180px; }
+.axs-cap-add { display: block; width: 100%; margin: 0 0 8px; padding: 6px; border: 1px dashed var(--axs-border, #3a3a3a); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; font-weight: 600; }
+.axs-cap-add:hover { border-style: solid; }
+.axs-env-files { margin: 8px 0; padding-left: 18px; opacity: .8; font-size: 13px; }
+.axs-env-note { margin-top: 14px; padding: 8px 10px; border-radius: 6px; background: rgba(127,127,127,.12); font-size: 13px; opacity: .85; }

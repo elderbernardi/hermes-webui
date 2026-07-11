@@ -190,8 +190,8 @@
         out += '<div class="axs-sec" style="margin-left:18px">' + _esc(n.name) +
           ' (' + (n.count || 0) + ')</div>';
       } else if (n.type === 'intake') {
-        out += '<div class="axs-pi"><span class="st"></span>' + _esc(n.title) +
-          ' · ' + _esc(n.status) + '</div>';
+        out += '<div class="axs-pi" data-intake="' + _esc(n.id) + '"><span class="st"></span>' +
+          _esc(n.title) + ' · ' + _esc(n.status) + '</div>';
       } else if (n.type === 'artifact') {
         out += '<div class="axs-pi" data-art="' + _esc(n.name) +
           '" data-artkind="' + _esc(n.kind || '') +
@@ -201,6 +201,14 @@
       }
     });
     sub.innerHTML = out;
+    if (scope === 'inbox') {
+      var cap = document.createElement('button');
+      cap.type = 'button';
+      cap.className = 'axs-cap-add';
+      cap.textContent = '＋ Capturar';
+      cap.addEventListener('click', acervoStudioCapture);
+      sub.insertBefore(cap, sub.firstChild);
+    }
     sub.querySelectorAll('[data-mv]').forEach(function (el) {
       el.addEventListener('click', function () {
         acervoStudioSelectScope('micro', el.getAttribute('data-mv'));
@@ -210,6 +218,11 @@
       el.addEventListener('click', function () {
         if (typeof acervoStudioOpenPage === 'function')
           acervoStudioOpenPage(el.getAttribute('data-path'));
+      });
+    });
+    sub.querySelectorAll('[data-intake]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        acervoStudioOpenEnvelope(el.getAttribute('data-intake'));
       });
     });
     sub.querySelectorAll('[data-art]').forEach(function (el) {
@@ -631,6 +644,158 @@
     });
   }
   window.acervoStudioSearch = acervoStudioSearch;
+
+  // ── Phase 2a: inbox envelope detail ──────────────────────────────────────
+  async function acervoStudioOpenEnvelope(iid) {
+    var root = _root();
+    var reader = root && root.querySelector('[data-axs="reader"]');
+    if (!reader) return;
+    AXS.selectedPath = ''; AXS.page = null; AXS.artifactId = '';
+    reader.innerHTML = '<div class="axs-reader-empty">Carregando…</div>';
+    var d;
+    try {
+      d = await api('/api/acervo/x/intake/item?session_id=' + encodeURIComponent(_sid()) +
+        '&id=' + encodeURIComponent(iid));
+    } catch (e) { reader.innerHTML = '<div class="axs-reader-empty">Erro ao abrir o envelope.</div>'; return; }
+    var env = (d && d.envelope) || {};
+    var chips = _chip('📥 ' + (env.content_type || 'intake')) + _chip('✓ ' + (env.status || 'received'));
+    var caption = env.user_caption || env.original_filename || env.intake_id || iid;
+    var files = env.files || [];
+    var body = '';
+    // Preview the first original file inline (md rendered; else sandboxed iframe/img).
+    if (files.length) {
+      var rawUrl = '/api/acervo/x/raw?session_id=' + encodeURIComponent(_sid()) +
+        '&path=' + encodeURIComponent('_inbox/incoming/' + iid + '/' + files[0]);
+      if (/\.(md|txt)$/i.test(files[0])) {
+        var txt = '';
+        try { var r = await fetch(rawUrl); txt = await r.text(); } catch (e) { txt = ''; }
+        body = '<div class="axs-md">' +
+          ((typeof renderMd === 'function') ? renderMd(txt) : _esc(txt)) + '</div>';
+      } else if (env.content_type === 'image') {
+        body = '<img class="axs-raw" src="' + _esc(rawUrl) + '" alt="' + _esc(files[0]) + '">';
+      } else {
+        body = '<iframe class="axs-raw" src="' + _esc(rawUrl) + '" sandbox title="' + _esc(files[0]) + '"></iframe>';
+      }
+    }
+    var fileList = files.map(function (f) { return '<li>' + _esc(f) + '</li>'; }).join('');
+    reader.innerHTML =
+      '<div class="axs-crumb"><b>📥 Inbox</b> › ' + _esc(env.intake_id || iid) + '</div>' +
+      '<div class="axs-doc axs-env">' +
+      '  <div class="axs-fm">' + chips + '</div>' +
+      '  <h1 class="axs-title">' + _esc(caption) + '</h1>' +
+      (fileList ? '<ul class="axs-env-files">' + fileList + '</ul>' : '') +
+      body +
+      '  <div class="axs-env-note">Aguardando triagem (Fase 2b). Nada foi escrito na memória semântica.</div>' +
+      '</div>';
+  }
+  window.acervoStudioOpenEnvelope = acervoStudioOpenEnvelope;
+
+  // ── Phase 2a: intake capture ─────────────────────────────────────────────
+  function _readFileB64(file) {
+    return new Promise(function (resolve, reject) {
+      var fr = new FileReader();
+      fr.onload = function () {
+        var res = String(fr.result || '');
+        var comma = res.indexOf(',');
+        resolve(comma >= 0 ? res.slice(comma + 1) : res);  // strip data: prefix
+      };
+      fr.onerror = function () { reject(fr.error || new Error('read failed')); };
+      fr.readAsDataURL(file);
+    });
+  }
+
+  function acervoStudioCapture() {
+    var root = _root();
+    var reader = root && root.querySelector('[data-axs="reader"]');
+    if (!reader) return;
+    AXS.selectedPath = ''; AXS.page = null; AXS.artifactId = '';
+    reader.innerHTML =
+      '<div class="axs-crumb"><b>📥 Inbox</b> › Capturar</div>' +
+      '<div class="axs-doc axs-cap">' +
+      '  <div class="axs-cap-tabs">' +
+      '    <button type="button" class="on" data-cap="text">Texto</button>' +
+      '    <button type="button" data-cap="link">Link</button>' +
+      '    <button type="button" data-cap="file">Arquivo</button>' +
+      '  </div>' +
+      '  <label class="axs-field"><span>Legenda (opcional)</span>' +
+      '    <input type="text" data-cap-fm="caption" placeholder="do que se trata?"></label>' +
+      '  <div data-cap-pane="text">' +
+      '    <label class="axs-field axs-fgrow"><span>Texto</span>' +
+      '      <textarea data-cap-fm="text" spellcheck="false" placeholder="cole ou escreva…"></textarea></label>' +
+      '  </div>' +
+      '  <div data-cap-pane="link" hidden>' +
+      '    <label class="axs-field"><span>URL</span>' +
+      '      <input type="url" data-cap-fm="url" placeholder="https://…"></label>' +
+      '  </div>' +
+      '  <div data-cap-pane="file" hidden>' +
+      '    <label class="axs-field"><span>Arquivo (até 14 MB)</span>' +
+      '      <input type="file" data-cap-fm="file"></label>' +
+      '  </div>' +
+      '  <div class="axs-acts"><button type="button" class="axs-act axs-act-primary" ' +
+      '     data-cap-submit>Capturar</button></div>' +
+      '</div>';
+    var kind = { v: 'text' };
+    reader.querySelectorAll('[data-cap]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        kind.v = b.getAttribute('data-cap');
+        reader.querySelectorAll('[data-cap]').forEach(function (x) {
+          x.classList.toggle('on', x === b);
+        });
+        reader.querySelectorAll('[data-cap-pane]').forEach(function (p) {
+          p.hidden = p.getAttribute('data-cap-pane') !== kind.v;
+        });
+      });
+    });
+    reader.querySelector('[data-cap-submit]')
+      .addEventListener('click', function () { acervoStudioSubmitCapture(kind.v); });
+  }
+  window.acervoStudioCapture = acervoStudioCapture;
+
+  async function acervoStudioSubmitCapture(kind) {
+    var root = _root();
+    var reader = root && root.querySelector('[data-axs="reader"]');
+    if (!reader) return;
+    var caption = (reader.querySelector('[data-cap-fm="caption"]') || {}).value || '';
+    var url, body;
+    if (kind === 'text') {
+      var text = (reader.querySelector('[data-cap-fm="text"]') || {}).value || '';
+      if (!text.trim()) { _toast('Escreva algum texto', 'error'); return; }
+      url = '/api/acervo/x/intake/text';
+      body = { session_id: _sid(), caption: caption, text: text };
+    } else if (kind === 'link') {
+      var u = (reader.querySelector('[data-cap-fm="url"]') || {}).value || '';
+      if (!u.trim()) { _toast('Informe uma URL', 'error'); return; }
+      url = '/api/acervo/x/intake/link';
+      body = { session_id: _sid(), caption: caption, url: u.trim() };
+    } else {
+      var fi = reader.querySelector('[data-cap-fm="file"]');
+      var file = fi && fi.files && fi.files[0];
+      if (!file) { _toast('Escolha um arquivo', 'error'); return; }
+      if (file.size > 14 * 1024 * 1024) { _toast('Arquivo acima de 14 MB', 'error'); return; }
+      var b64;
+      try { b64 = await _readFileB64(file); }
+      catch (e) { _toast('Falha ao ler o arquivo' + _detail(e), 'error'); return; }
+      url = '/api/acervo/x/intake/upload';
+      body = { session_id: _sid(), caption: caption, filename: file.name,
+               mime: file.type || '', content_b64: b64 };
+    }
+    // Disable the submit button while the POST is in flight so a double-click
+    // can't fire two captures (which, same-second/same-slug, the backend would
+    // otherwise suffix — but one gesture should mean one envelope).
+    var submitBtn = reader.querySelector('[data-cap-submit]');
+    if (submitBtn) submitBtn.disabled = true;
+    try {
+      await api(url, { method: 'POST', body: JSON.stringify(body) });
+    } catch (e) {
+      if (submitBtn) submitBtn.disabled = false;
+      _toast('Falha ao capturar' + _detail(e), 'error');
+      return;
+    }
+    _toast('Capturado no inbox', 'success');
+    AXS.scope = 'inbox';
+    if (typeof acervoStudioRenderNav === 'function') await acervoStudioRenderNav();
+  }
+  window.acervoStudioSubmitCapture = acervoStudioSubmitCapture;
 
   function acervoStudioToggle() { if (AXS.open) _close(); else _open(); }
   window.acervoStudioToggle = acervoStudioToggle;

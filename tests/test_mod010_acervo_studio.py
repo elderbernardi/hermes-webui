@@ -351,3 +351,199 @@ def test_handle_tree_http_dispatch_micro_scope(acervo, session_ok, jcap):
     assert jcap["obj"]["scope"] == "micro"
     slugs = [n["slug"] for n in jcap["obj"]["nodes"] if n["type"] == "microverse"]
     assert "comercial" in slugs
+
+
+# ── Phase 2a: intake capture (api/acervo_studio.py) ────────────────────────
+import base64 as _b64
+import datetime as _dt
+
+
+def test_slugify_and_intake_id_shape(acervo):
+    assert studio._slugify("Notas de Reunião — Q3!") == "notas-de-reuniao-q3"
+    assert studio._slugify("   ") == "item"          # empty -> fallback
+    iid = studio._intake_id("hello", now=_dt.datetime(2026, 7, 10, 9, 8, 7))
+    assert iid == "int_20260710_090807_hello"
+    assert studio._valid_intake_id(iid)
+    assert not studio._valid_intake_id("../evil")
+    assert not studio._valid_intake_id(".hidden")
+    assert not studio._valid_intake_id("has/slash")
+
+
+def test_write_envelope_text_creates_manifest_and_original(acervo):
+    m = studio._write_envelope(
+        acervo, content_type="text", caption="a quick note",
+        filename="", mime="", payload=b"# hello\n\nworld",
+        session_id="sess-1", now=_dt.datetime(2026, 7, 10, 9, 8, 7))
+    assert m["intake_id"] == "int_20260710_090807_a-quick-note"
+    assert m["channel"] == "dashboard"
+    assert m["content_type"] == "text"
+    assert m["status"] == "received"
+    assert m["session_ref"] == "sess-1"
+    env = acervo / "_inbox" / "incoming" / m["intake_id"]
+    assert (env / "manifest.json").is_file()
+    assert (env / "original" / "note.md").read_text(encoding="utf-8") == "# hello\n\nworld"
+
+
+def test_write_envelope_link_stores_url(acervo):
+    m = studio._write_envelope(
+        acervo, content_type="link", caption="Open Notebook",
+        filename="", mime="", payload=b"https://example.com/x", session_id="s")
+    env = acervo / "_inbox" / "incoming" / m["intake_id"]
+    assert (env / "original" / "source.txt").read_text(encoding="utf-8") == "https://example.com/x"
+
+
+def test_write_envelope_file_uses_safe_filename(acervo):
+    m = studio._write_envelope(
+        acervo, content_type="document", caption="",
+        filename="../../etc/passwd", mime="text/plain", payload=b"data",
+        session_id="s")
+    env = acervo / "_inbox" / "incoming" / m["intake_id"]
+    assert (env / "original" / "passwd").read_text(encoding="utf-8") == "data"
+    assert m["original_filename"] == "passwd"
+    assert m["local_cached_path"] == "original/passwd"
+
+
+def test_read_and_list_envelopes(acervo):
+    m1 = studio._write_envelope(acervo, content_type="text", caption="first",
+                                filename="", mime="", payload=b"one", session_id="s")
+    m2 = studio._write_envelope(acervo, content_type="link", caption="second",
+                                filename="", mime="", payload=b"http://y", session_id="s")
+    got = studio._read_envelope(acervo, m1["intake_id"])
+    assert got["intake_id"] == m1["intake_id"]
+    assert "original/note.md" in got["files"]
+    assert studio._read_envelope(acervo, "../escape") is None
+    assert studio._read_envelope(acervo, "int_20990101_000000_nope") is None
+    listing = studio._list_envelopes(acervo)
+    ids = [e["intake_id"] for e in listing]
+    assert set(ids) == {m1["intake_id"], m2["intake_id"]}
+    assert all("title" in e and "status" in e for e in listing)
+
+
+# ── Phase 2a T2: intake create routes (text/link/upload base64) ────────────
+
+def test_intake_text_route_creates_envelope(acervo, session_ok, jcap):
+    h = _Handler("/api/acervo/x/intake/text")
+    studio.handle_studio_post(h, {"session_id": "sid1", "caption": "hi", "text": "hello world"})
+    assert jcap["status"] == 200
+    iid = jcap["obj"]["intake_id"]
+    assert iid.startswith("int_") and jcap["obj"]["ok"] is True
+    env = acervo / "_inbox" / "incoming" / iid
+    assert (env / "original" / "note.md").read_text(encoding="utf-8") == "hello world"
+
+
+def test_intake_link_route(acervo, session_ok, jcap):
+    h = _Handler("/api/acervo/x/intake/link")
+    studio.handle_studio_post(h, {"session_id": "sid1", "url": "https://example.com"})
+    assert jcap["status"] == 200
+    env = acervo / "_inbox" / "incoming" / jcap["obj"]["intake_id"]
+    assert (env / "original" / "source.txt").read_text(encoding="utf-8") == "https://example.com"
+
+
+def test_intake_upload_base64(acervo, session_ok, jcap):
+    b64 = _b64.b64encode(b"PDFDATA").decode("ascii")
+    h = _Handler("/api/acervo/x/intake/upload")
+    studio.handle_studio_post(h, {"session_id": "sid1", "filename": "report.pdf",
+                                  "mime": "application/pdf", "content_b64": b64})
+    assert jcap["status"] == 200
+    env = acervo / "_inbox" / "incoming" / jcap["obj"]["intake_id"]
+    assert (env / "original" / "report.pdf").read_bytes() == b"PDFDATA"
+
+
+def test_intake_requires_session(acervo, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "_resolve_session_workspace", lambda sid: None)
+    h = _Handler("/api/acervo/x/intake/text")
+    studio.handle_studio_post(h, {"session_id": "bad", "text": "x"})
+    assert jcap["status"] in (400, 404)
+
+
+def test_intake_upload_too_large_413(acervo, session_ok, jcap):
+    big = _b64.b64encode(b"x" * (studio._MAX_INTAKE_BYTES + 1)).decode("ascii")
+    h = _Handler("/api/acervo/x/intake/upload")
+    studio.handle_studio_post(h, {"session_id": "sid1", "filename": "big.bin", "content_b64": big})
+    assert jcap["status"] == 413
+
+
+def test_intake_empty_text_rejected(acervo, session_ok, jcap):
+    h = _Handler("/api/acervo/x/intake/text")
+    studio.handle_studio_post(h, {"session_id": "sid1", "text": "   "})
+    assert jcap["status"] == 400
+
+
+def test_intake_bad_base64_rejected(acervo, session_ok, jcap):
+    h = _Handler("/api/acervo/x/intake/upload")
+    studio.handle_studio_post(h, {"session_id": "sid1", "filename": "x.bin",
+                                  "content_b64": "!!!not base64!!!"})
+    assert jcap["status"] == 400
+
+
+# ── Phase 2a T3: intake list + detail GET routes ───────────────────────────
+
+def test_intake_list_route(acervo, session_ok, jcap):
+    studio._write_envelope(acervo, content_type="text", caption="alpha",
+                           filename="", mime="", payload=b"a", session_id="s")
+    studio._write_envelope(acervo, content_type="link", caption="beta",
+                           filename="", mime="", payload=b"http://b", session_id="s")
+    h = _Handler("/api/acervo/x/intake")
+    studio.handle_studio_get(h, _get("/api/acervo/x/intake?session_id=sid1"))
+    assert jcap["status"] == 200
+    assert jcap["obj"]["count"] == 2
+    assert {i["title"] for i in jcap["obj"]["items"]} == {"alpha", "beta"}
+
+
+def test_intake_detail_route(acervo, session_ok, jcap):
+    m = studio._write_envelope(acervo, content_type="text", caption="alpha",
+                               filename="", mime="", payload=b"hello", session_id="s")
+    h = _Handler("/api/acervo/x/intake/item")
+    studio.handle_studio_get(h, _get("/api/acervo/x/intake/item?session_id=sid1&id=" + m["intake_id"]))
+    assert jcap["status"] == 200
+    assert jcap["obj"]["envelope"]["intake_id"] == m["intake_id"]
+    assert "original/note.md" in jcap["obj"]["envelope"]["files"]
+
+
+def test_intake_detail_missing_404(acervo, session_ok, jcap):
+    h = _Handler("/api/acervo/x/intake/item")
+    studio.handle_studio_get(h, _get("/api/acervo/x/intake/item?session_id=sid1&id=int_20990101_000000_nope"))
+    assert jcap["status"] == 404
+
+
+def test_intake_detail_rejects_bad_id(acervo, session_ok, jcap):
+    h = _Handler("/api/acervo/x/intake/item")
+    studio.handle_studio_get(h, _get("/api/acervo/x/intake/item?session_id=sid1&id=../../etc"))
+    assert jcap["status"] in (400, 404)
+
+
+def test_get_dispatcher_delegates_intake_list(acervo, session_ok, jcap):
+    h = _Handler("/api/acervo/x/intake")
+    ax.handle_acervo_x_get(h, _get("/api/acervo/x/intake?session_id=sid1"))
+    assert jcap["status"] == 200
+    assert "items" in jcap["obj"]
+
+
+# ── Phase 2a review fixes: id-collision + GET session gates ─────────────────
+
+def test_write_envelope_collision_no_overwrite(acervo):
+    now = _dt.datetime(2026, 7, 10, 9, 8, 7)
+    m1 = studio._write_envelope(acervo, content_type="text", caption="dup",
+                                filename="", mime="", payload=b"first", session_id="s", now=now)
+    m2 = studio._write_envelope(acervo, content_type="text", caption="dup",
+                                filename="", mime="", payload=b"second", session_id="s", now=now)
+    assert m1["intake_id"] != m2["intake_id"]
+    assert m2["intake_id"] == m1["intake_id"] + "-2"
+    assert studio._valid_intake_id(m2["intake_id"])   # suffixed id still passes the gate
+    inc = acervo / "_inbox" / "incoming"
+    assert (inc / m1["intake_id"] / "original" / "note.md").read_text(encoding="utf-8") == "first"
+    assert (inc / m2["intake_id"] / "original" / "note.md").read_text(encoding="utf-8") == "second"
+
+
+def test_intake_list_requires_session(acervo, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "_resolve_session_workspace", lambda sid: None)
+    h = _Handler("/api/acervo/x/intake")
+    studio.handle_studio_get(h, _get("/api/acervo/x/intake?session_id=ghost"))
+    assert jcap["status"] == 404
+
+
+def test_intake_detail_requires_session(acervo, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "_resolve_session_workspace", lambda sid: None)
+    h = _Handler("/api/acervo/x/intake/item")
+    studio.handle_studio_get(h, _get("/api/acervo/x/intake/item?session_id=ghost&id=int_20990101_000000_x"))
+    assert jcap["status"] == 404
