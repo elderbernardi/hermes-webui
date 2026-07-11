@@ -517,3 +517,33 @@ def test_get_dispatcher_delegates_intake_list(acervo, session_ok, jcap):
     ax.handle_acervo_x_get(h, _get("/api/acervo/x/intake?session_id=sid1"))
     assert jcap["status"] == 200
     assert "items" in jcap["obj"]
+
+
+# ── Phase 2a review fixes: id-collision + GET session gates ─────────────────
+
+def test_write_envelope_collision_no_overwrite(acervo):
+    now = _dt.datetime(2026, 7, 10, 9, 8, 7)
+    m1 = studio._write_envelope(acervo, content_type="text", caption="dup",
+                                filename="", mime="", payload=b"first", session_id="s", now=now)
+    m2 = studio._write_envelope(acervo, content_type="text", caption="dup",
+                                filename="", mime="", payload=b"second", session_id="s", now=now)
+    assert m1["intake_id"] != m2["intake_id"]
+    assert m2["intake_id"] == m1["intake_id"] + "-2"
+    assert studio._valid_intake_id(m2["intake_id"])   # suffixed id still passes the gate
+    inc = acervo / "_inbox" / "incoming"
+    assert (inc / m1["intake_id"] / "original" / "note.md").read_text(encoding="utf-8") == "first"
+    assert (inc / m2["intake_id"] / "original" / "note.md").read_text(encoding="utf-8") == "second"
+
+
+def test_intake_list_requires_session(acervo, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "_resolve_session_workspace", lambda sid: None)
+    h = _Handler("/api/acervo/x/intake")
+    studio.handle_studio_get(h, _get("/api/acervo/x/intake?session_id=ghost"))
+    assert jcap["status"] == 404
+
+
+def test_intake_detail_requires_session(acervo, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "_resolve_session_workspace", lambda sid: None)
+    h = _Handler("/api/acervo/x/intake/item")
+    studio.handle_studio_get(h, _get("/api/acervo/x/intake/item?session_id=ghost&id=int_20990101_000000_x"))
+    assert jcap["status"] == 404

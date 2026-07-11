@@ -728,7 +728,7 @@
       '      <input type="url" data-cap-fm="url" placeholder="https://…"></label>' +
       '  </div>' +
       '  <div data-cap-pane="file" hidden>' +
-      '    <label class="axs-field"><span>Arquivo (até 25 MB)</span>' +
+      '    <label class="axs-field"><span>Arquivo (até 14 MB)</span>' +
       '      <input type="file" data-cap-fm="file"></label>' +
       '  </div>' +
       '  <div class="axs-acts"><button type="button" class="axs-act axs-act-primary" ' +
@@ -771,7 +771,7 @@
       var fi = reader.querySelector('[data-cap-fm="file"]');
       var file = fi && fi.files && fi.files[0];
       if (!file) { _toast('Escolha um arquivo', 'error'); return; }
-      if (file.size > 25 * 1024 * 1024) { _toast('Arquivo acima de 25 MB', 'error'); return; }
+      if (file.size > 14 * 1024 * 1024) { _toast('Arquivo acima de 14 MB', 'error'); return; }
       var b64;
       try { b64 = await _readFileB64(file); }
       catch (e) { _toast('Falha ao ler o arquivo' + _detail(e), 'error'); return; }
@@ -779,9 +779,18 @@
       body = { session_id: _sid(), caption: caption, filename: file.name,
                mime: file.type || '', content_b64: b64 };
     }
+    // Disable the submit button while the POST is in flight so a double-click
+    // can't fire two captures (which, same-second/same-slug, the backend would
+    // otherwise suffix — but one gesture should mean one envelope).
+    var submitBtn = reader.querySelector('[data-cap-submit]');
+    if (submitBtn) submitBtn.disabled = true;
     try {
       await api(url, { method: 'POST', body: JSON.stringify(body) });
-    } catch (e) { _toast('Falha ao capturar' + _detail(e), 'error'); return; }
+    } catch (e) {
+      if (submitBtn) submitBtn.disabled = false;
+      _toast('Falha ao capturar' + _detail(e), 'error');
+      return;
+    }
     _toast('Capturado no inbox', 'success');
     AXS.scope = 'inbox';
     if (typeof acervoStudioRenderNav === 'function') await acervoStudioRenderNav();

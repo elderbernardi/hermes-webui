@@ -34,7 +34,12 @@ from api.acervo_explorer import _safe_acervo_path
 _MAX_FILE_DOWNLOAD_BYTES = 50 * 1024 * 1024  # mirror MOD-009 _MAX_RAW_BYTES
 
 # ── Phase 2a: intake capture (agentless — input is not memory) ──────────────
-_MAX_INTAKE_BYTES = 25 * 1024 * 1024  # decoded payload cap for capture (HTTP 413)
+# Decoded payload cap for capture (HTTP 413). Uploads arrive as base64-in-JSON,
+# and helpers.read_body caps the whole JSON body at MAX_BODY_BYTES=20MiB BEFORE
+# this handler runs. base64 inflates ~4/3, so 14MiB decoded ≈ 18.7MiB body stays
+# under that ceiling; a larger cap would be unreachable (rejected upstream with a
+# generic body-too-large error). Keep the UI cap in acervo-studio.js in sync.
+_MAX_INTAKE_BYTES = 14 * 1024 * 1024
 _INTAKE_ID_RE = re.compile(r"^int_\d{8}_\d{6}_[a-z0-9][a-z0-9-]*$")
 _INTAKE_CONTENT_TYPES = {"text", "link", "document", "image", "audio", "video", "zip"}
 
@@ -74,8 +79,17 @@ def _write_envelope(root, *, content_type, caption, filename, mime,
         raise ValueError("bad content_type")
     now = now or datetime.datetime.now()
     slug_src = caption or filename or content_type
-    iid = _intake_id(slug_src, now=now)
-    env = root / "_inbox" / "incoming" / iid
+    base_iid = _intake_id(slug_src, now=now)
+    # _intake_id has 1-second granularity; two captures with the same slug in the
+    # same second would collide. Suffix "-2", "-3", … so a later envelope never
+    # overwrites an earlier one (the suffix stays within the id regex's charset).
+    inc = root / "_inbox" / "incoming"
+    iid = base_iid
+    n = 2
+    while (inc / iid).exists():
+        iid = "%s-%d" % (base_iid, n)
+        n += 1
+    env = inc / iid
     (env / "original").mkdir(parents=True, exist_ok=True)
     if content_type == "text":
         orig_name = "note.md"
