@@ -351,3 +351,69 @@ def test_handle_tree_http_dispatch_micro_scope(acervo, session_ok, jcap):
     assert jcap["obj"]["scope"] == "micro"
     slugs = [n["slug"] for n in jcap["obj"]["nodes"] if n["type"] == "microverse"]
     assert "comercial" in slugs
+
+
+# ── Phase 2a: intake capture (api/acervo_studio.py) ────────────────────────
+import base64 as _b64
+import datetime as _dt
+
+
+def test_slugify_and_intake_id_shape(acervo):
+    assert studio._slugify("Notas de Reunião — Q3!") == "notas-de-reuniao-q3"
+    assert studio._slugify("   ") == "item"          # empty -> fallback
+    iid = studio._intake_id("hello", now=_dt.datetime(2026, 7, 10, 9, 8, 7))
+    assert iid == "int_20260710_090807_hello"
+    assert studio._valid_intake_id(iid)
+    assert not studio._valid_intake_id("../evil")
+    assert not studio._valid_intake_id(".hidden")
+    assert not studio._valid_intake_id("has/slash")
+
+
+def test_write_envelope_text_creates_manifest_and_original(acervo):
+    m = studio._write_envelope(
+        acervo, content_type="text", caption="a quick note",
+        filename="", mime="", payload=b"# hello\n\nworld",
+        session_id="sess-1", now=_dt.datetime(2026, 7, 10, 9, 8, 7))
+    assert m["intake_id"] == "int_20260710_090807_a-quick-note"
+    assert m["channel"] == "dashboard"
+    assert m["content_type"] == "text"
+    assert m["status"] == "received"
+    assert m["session_ref"] == "sess-1"
+    env = acervo / "_inbox" / "incoming" / m["intake_id"]
+    assert (env / "manifest.json").is_file()
+    assert (env / "original" / "note.md").read_text(encoding="utf-8") == "# hello\n\nworld"
+
+
+def test_write_envelope_link_stores_url(acervo):
+    m = studio._write_envelope(
+        acervo, content_type="link", caption="Open Notebook",
+        filename="", mime="", payload=b"https://example.com/x", session_id="s")
+    env = acervo / "_inbox" / "incoming" / m["intake_id"]
+    assert (env / "original" / "source.txt").read_text(encoding="utf-8") == "https://example.com/x"
+
+
+def test_write_envelope_file_uses_safe_filename(acervo):
+    m = studio._write_envelope(
+        acervo, content_type="document", caption="",
+        filename="../../etc/passwd", mime="text/plain", payload=b"data",
+        session_id="s")
+    env = acervo / "_inbox" / "incoming" / m["intake_id"]
+    assert (env / "original" / "passwd").read_text(encoding="utf-8") == "data"
+    assert m["original_filename"] == "passwd"
+    assert m["local_cached_path"] == "original/passwd"
+
+
+def test_read_and_list_envelopes(acervo):
+    m1 = studio._write_envelope(acervo, content_type="text", caption="first",
+                                filename="", mime="", payload=b"one", session_id="s")
+    m2 = studio._write_envelope(acervo, content_type="link", caption="second",
+                                filename="", mime="", payload=b"http://y", session_id="s")
+    got = studio._read_envelope(acervo, m1["intake_id"])
+    assert got["intake_id"] == m1["intake_id"]
+    assert "original/note.md" in got["files"]
+    assert studio._read_envelope(acervo, "../escape") is None
+    assert studio._read_envelope(acervo, "int_20990101_000000_nope") is None
+    listing = studio._list_envelopes(acervo)
+    ids = [e["intake_id"] for e in listing]
+    assert set(ids) == {m1["intake_id"], m2["intake_id"]}
+    assert all("title" in e and "status" in e for e in listing)

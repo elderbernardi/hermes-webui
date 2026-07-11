@@ -19,13 +19,139 @@ happens through late ``import api.routes as routes`` inside functions to avoid
 a circular import at module load (the MOD-009 idiom).
 """
 
+import datetime
+import json
 import os
+import re
 import shutil
+import unicodedata
+import uuid
 from urllib.parse import parse_qs
 
 from api.acervo_explorer import _safe_acervo_path
 
 _MAX_FILE_DOWNLOAD_BYTES = 50 * 1024 * 1024  # mirror MOD-009 _MAX_RAW_BYTES
+
+# ── Phase 2a: intake capture (agentless — input is not memory) ──────────────
+_MAX_INTAKE_BYTES = 25 * 1024 * 1024  # decoded payload cap for capture (HTTP 413)
+_INTAKE_ID_RE = re.compile(r"^int_\d{8}_\d{6}_[a-z0-9][a-z0-9-]*$")
+_INTAKE_CONTENT_TYPES = {"text", "link", "document", "image", "audio", "video", "zip"}
+
+
+def _slugify(text):
+    # NFKD-normalize so accented chars fold to ASCII (ã→a) instead of becoming
+    # separators; then collapse any remaining non-alnum runs to single dashes.
+    s = unicodedata.normalize("NFKD", str(text or "")).encode("ascii", "ignore").decode("ascii")
+    s = re.sub(r"[^a-z0-9]+", "-", s.strip().lower()).strip("-")
+    s = re.sub(r"-{2,}", "-", s)
+    return (s[:32].strip("-") or "item")
+
+
+def _valid_intake_id(iid):
+    return bool(iid) and bool(_INTAKE_ID_RE.match(str(iid)))
+
+
+def _intake_id(slug, now=None):
+    now = now or datetime.datetime.now()
+    return "int_%s_%s" % (now.strftime("%Y%m%d_%H%M%S"), _slugify(slug))
+
+
+def _safe_basename(name):
+    """Reduce an arbitrary client filename to a safe basename (no path parts,
+    no dot-leading, no separators)."""
+    base = os.path.basename(str(name or "").replace("\\", "/"))
+    base = base.lstrip(".") or "file"
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", base)[:120] or "file"
+
+
+def _write_envelope(root, *, content_type, caption, filename, mime,
+                    payload, session_id, now=None):
+    """Create _inbox/incoming/{id}/ with original/<file> + manifest.json.
+    `root` is the acervo root Path. Pure filesystem; no agent, no semantic
+    write. Returns the manifest dict."""
+    if content_type not in _INTAKE_CONTENT_TYPES:
+        raise ValueError("bad content_type")
+    now = now or datetime.datetime.now()
+    slug_src = caption or filename or content_type
+    iid = _intake_id(slug_src, now=now)
+    env = root / "_inbox" / "incoming" / iid
+    (env / "original").mkdir(parents=True, exist_ok=True)
+    if content_type == "text":
+        orig_name = "note.md"
+    elif content_type == "link":
+        orig_name = "source.txt"
+    else:
+        orig_name = _safe_basename(filename)
+    (env / "original" / orig_name).write_bytes(payload)
+    manifest = {
+        "intake_id": iid,
+        "channel": "dashboard",
+        "received_at": now.isoformat(),
+        "content_type": content_type,
+        "original_filename": (orig_name if content_type not in ("text", "link") else ""),
+        "mime_type": str(mime or ""),
+        "local_cached_path": "original/" + orig_name,
+        "user_caption": str(caption or ""),
+        "correlation_id": uuid.uuid4().hex,
+        "session_ref": str(session_id or ""),
+        "status": "received",
+    }
+    (env / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    return manifest
+
+
+def _envelope_dir(root, iid):
+    if not _valid_intake_id(iid):
+        return None
+    d = root / "_inbox" / "incoming" / iid
+    return d if d.is_dir() else None
+
+
+def _read_envelope(root, iid):
+    d = _envelope_dir(root, iid)
+    if d is None:
+        return None
+    try:
+        m = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        m = {"intake_id": iid, "status": "received"}
+    files = []
+    orig = d / "original"
+    if orig.is_dir():
+        for f in sorted(orig.iterdir()):
+            if f.is_file():
+                files.append("original/" + f.name)
+    m["files"] = files
+    return m
+
+
+def _list_envelopes(root):
+    inc = root / "_inbox" / "incoming"
+    out = []
+    if not inc.is_dir():
+        return out
+    for d in inc.iterdir():
+        if not d.is_dir() or d.name.startswith("."):
+            continue
+        title = d.name
+        status = "received"
+        ctype = ""
+        received = ""
+        mf = d / "manifest.json"
+        if mf.is_file():
+            try:
+                m = json.loads(mf.read_text(encoding="utf-8"))
+                title = m.get("user_caption") or m.get("original_filename") or d.name
+                status = m.get("status") or "received"
+                ctype = m.get("content_type") or ""
+                received = m.get("received_at") or ""
+            except (OSError, ValueError):
+                pass
+        out.append({"intake_id": d.name, "title": title, "status": status,
+                    "content_type": ctype, "received_at": received})
+    out.sort(key=lambda e: e["intake_id"], reverse=True)  # id embeds timestamp
+    return out
 
 
 def _resolved_dot_safe(routes, target):
