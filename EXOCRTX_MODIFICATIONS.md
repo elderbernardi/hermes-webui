@@ -290,3 +290,48 @@ extração do MOD-007/008 para módulo e a criação de `exocortex/stable` v2; (
 o owner quer HW-1 **antes** do passe final de validação, e produção ao vivo (8787) está
 em jogo.
 
+### Triagem de segurança dos 2681 commits (2026-07-10)
+
+Passo interino/insumo da Estratégia C. Agente varreu `32458c44..upstream/master`
+(~45 commits em ~20 clusters), cada linha confirmada lendo o diff **e** conferindo se a
+superfície existe no fork. **Notícia boa: quase tudo é moot ou já aplicado. Um único
+achado crítico.**
+
+- 🔴 **RCE do terminal embutido sem gate** — upstream `d257e5f3` (+ `34342b9f`, #5857/#5764).
+  Os 5 handlers do terminal do fork (`_handle_terminal_start/input/resize/close/output`,
+  `api/routes.py:10890+`, dispatch `:9073-9082`) **não têm** gate de origem local; e
+  `check_auth` retorna `True` incondicionalmente quando **passwordless** (`api/auth.py:568`,
+  via `is_auth_enabled()`). O `_onboarding_gate_allows`/`_onboarding_request_is_local`
+  existe no fork mas **não** é aplicado ao terminal. Num bind passwordless, qualquer
+  request (direto ou **drive-by de browser** cross-origin, agravado pelo CORS `*` — ver
+  🟠) abre um shell como o usuário do servidor. Fix upstream = adicionar o gate local aos
+  handlers do terminal.
+  > **⚠️ Verificação da instância AO VIVO (2026-07-10, importante):** a 8787 atual **NÃO
+  > está exposta** — probe `POST /api/terminal/start` → **HTTP 401** (`Authentication
+  > required`), i.e. **auth ESTÁ habilitada** na instância provisionada (contradiz o
+  > "no password" do ledger de 2026-07-04 — foi reconfigurada, ou passkey), **e** o bind é
+  > `127.0.0.1:8787` (localhost). Portanto é um **bug latente no código**, não uma
+  > exposição ativa. Ainda assim vale corrigir (defense-in-depth; a postura passwordless
+  > é documentada como padrão → um restart sem senha reexpõe). **A re-fundação (Estratégia
+  > C) já traz o fix de graça**; se C não for imediata, cherry-pick `d257e5f3`+`34342b9f`
+  > como interino. Não empurrar para produção sem gate do owner (EX-08).
+- 🟠 **CORS preflight `Access-Control-Allow-Origin: *`** — `4e8978f0`. `server.py:424
+  do_OPTIONS` emite `*`. Fix depende de `_check_same_origin_browser_request` (o fork
+  substituiu por token-CSRF `_check_csrf`/`_allowed_public_origins`) → **adaptar** (ecoar
+  Origin só se permitido, `Vary: Origin`, nunca `*`). Compõe o vetor drive-by do 🔴.
+- 🟡 Redação de segredos no tool-card (`#4926/#4928`) — o `_redactToolTargetLabel`
+  (`static/ui.js:10872`) mascara só `sshpass -p`/`password=`; não `--token`/`--api-key`/
+  headers/`FOO=secret`. Baixa urgência (labels truncados ~112 chars). + correção-só:
+  `0d3ee7de` write atômico de `settings.json` + `state.db` read-only (integridade).
+- **Moot (não portar):** TTS SSRF (#5079/#5291/#5407/#5430 — o `/api/tts` do fork é
+  Edge-TTS custom, endpoint fixo, sem base_url do usuário); OIDC SSO (`api/auth_oidc.py`
+  inexistente no fork); skin-picker XSS (`registerHermesSkin` ausente); subagent
+  writable-session (#5307 — feature ausente; *confirmar* antes de descartar);
+  STREAM_SESSION_OWNERS (símbolo ausente). **Já aplicado:** follow-ups #3961
+  (credential-scrub em `profiles.py:754+`), symlink memory-write (#4242, rejeitado em
+  `routes.py:15783+`), remote workspace trust (#3664, `safe_resolve_ws`/O_NOFOLLOW).
+
+**Resumo:** um único buraco crítico real e latente (RCE do terminal), **não ativo** na
+8787 atual (auth on + localhost). Prioridade dentro do HW-1, resolvido pela re-fundação
+ou por cherry-pick interino `d257e5f3`+`34342b9f`.
+
