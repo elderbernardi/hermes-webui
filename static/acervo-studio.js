@@ -190,8 +190,8 @@
         out += '<div class="axs-sec" style="margin-left:18px">' + _esc(n.name) +
           ' (' + (n.count || 0) + ')</div>';
       } else if (n.type === 'intake') {
-        out += '<div class="axs-pi"><span class="st"></span>' + _esc(n.title) +
-          ' · ' + _esc(n.status) + '</div>';
+        out += '<div class="axs-pi" data-intake="' + _esc(n.id) + '"><span class="st"></span>' +
+          _esc(n.title) + ' · ' + _esc(n.status) + '</div>';
       } else if (n.type === 'artifact') {
         out += '<div class="axs-pi" data-art="' + _esc(n.name) +
           '" data-artkind="' + _esc(n.kind || '') +
@@ -201,6 +201,14 @@
       }
     });
     sub.innerHTML = out;
+    if (scope === 'inbox') {
+      var cap = document.createElement('button');
+      cap.type = 'button';
+      cap.className = 'axs-cap-add';
+      cap.textContent = '＋ Capturar';
+      cap.addEventListener('click', acervoStudioCapture);
+      sub.insertBefore(cap, sub.firstChild);
+    }
     sub.querySelectorAll('[data-mv]').forEach(function (el) {
       el.addEventListener('click', function () {
         acervoStudioSelectScope('micro', el.getAttribute('data-mv'));
@@ -631,6 +639,104 @@
     });
   }
   window.acervoStudioSearch = acervoStudioSearch;
+
+  // ── Phase 2a: intake capture ─────────────────────────────────────────────
+  function _readFileB64(file) {
+    return new Promise(function (resolve, reject) {
+      var fr = new FileReader();
+      fr.onload = function () {
+        var res = String(fr.result || '');
+        var comma = res.indexOf(',');
+        resolve(comma >= 0 ? res.slice(comma + 1) : res);  // strip data: prefix
+      };
+      fr.onerror = function () { reject(fr.error || new Error('read failed')); };
+      fr.readAsDataURL(file);
+    });
+  }
+
+  function acervoStudioCapture() {
+    var root = _root();
+    var reader = root && root.querySelector('[data-axs="reader"]');
+    if (!reader) return;
+    AXS.selectedPath = ''; AXS.page = null; AXS.artifactId = '';
+    reader.innerHTML =
+      '<div class="axs-crumb"><b>📥 Inbox</b> › Capturar</div>' +
+      '<div class="axs-doc axs-cap">' +
+      '  <div class="axs-cap-tabs">' +
+      '    <button type="button" class="on" data-cap="text">Texto</button>' +
+      '    <button type="button" data-cap="link">Link</button>' +
+      '    <button type="button" data-cap="file">Arquivo</button>' +
+      '  </div>' +
+      '  <label class="axs-field"><span>Legenda (opcional)</span>' +
+      '    <input type="text" data-cap-fm="caption" placeholder="do que se trata?"></label>' +
+      '  <div data-cap-pane="text">' +
+      '    <label class="axs-field axs-fgrow"><span>Texto</span>' +
+      '      <textarea data-cap-fm="text" spellcheck="false" placeholder="cole ou escreva…"></textarea></label>' +
+      '  </div>' +
+      '  <div data-cap-pane="link" hidden>' +
+      '    <label class="axs-field"><span>URL</span>' +
+      '      <input type="url" data-cap-fm="url" placeholder="https://…"></label>' +
+      '  </div>' +
+      '  <div data-cap-pane="file" hidden>' +
+      '    <label class="axs-field"><span>Arquivo (até 25 MB)</span>' +
+      '      <input type="file" data-cap-fm="file"></label>' +
+      '  </div>' +
+      '  <div class="axs-acts"><button type="button" class="axs-act axs-act-primary" ' +
+      '     data-cap-submit>Capturar</button></div>' +
+      '</div>';
+    var kind = { v: 'text' };
+    reader.querySelectorAll('[data-cap]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        kind.v = b.getAttribute('data-cap');
+        reader.querySelectorAll('[data-cap]').forEach(function (x) {
+          x.classList.toggle('on', x === b);
+        });
+        reader.querySelectorAll('[data-cap-pane]').forEach(function (p) {
+          p.hidden = p.getAttribute('data-cap-pane') !== kind.v;
+        });
+      });
+    });
+    reader.querySelector('[data-cap-submit]')
+      .addEventListener('click', function () { acervoStudioSubmitCapture(kind.v); });
+  }
+  window.acervoStudioCapture = acervoStudioCapture;
+
+  async function acervoStudioSubmitCapture(kind) {
+    var root = _root();
+    var reader = root && root.querySelector('[data-axs="reader"]');
+    if (!reader) return;
+    var caption = (reader.querySelector('[data-cap-fm="caption"]') || {}).value || '';
+    var url, body;
+    if (kind === 'text') {
+      var text = (reader.querySelector('[data-cap-fm="text"]') || {}).value || '';
+      if (!text.trim()) { _toast('Escreva algum texto', 'error'); return; }
+      url = '/api/acervo/x/intake/text';
+      body = { session_id: _sid(), caption: caption, text: text };
+    } else if (kind === 'link') {
+      var u = (reader.querySelector('[data-cap-fm="url"]') || {}).value || '';
+      if (!u.trim()) { _toast('Informe uma URL', 'error'); return; }
+      url = '/api/acervo/x/intake/link';
+      body = { session_id: _sid(), caption: caption, url: u.trim() };
+    } else {
+      var fi = reader.querySelector('[data-cap-fm="file"]');
+      var file = fi && fi.files && fi.files[0];
+      if (!file) { _toast('Escolha um arquivo', 'error'); return; }
+      if (file.size > 25 * 1024 * 1024) { _toast('Arquivo acima de 25 MB', 'error'); return; }
+      var b64;
+      try { b64 = await _readFileB64(file); }
+      catch (e) { _toast('Falha ao ler o arquivo' + _detail(e), 'error'); return; }
+      url = '/api/acervo/x/intake/upload';
+      body = { session_id: _sid(), caption: caption, filename: file.name,
+               mime: file.type || '', content_b64: b64 };
+    }
+    try {
+      await api(url, { method: 'POST', body: JSON.stringify(body) });
+    } catch (e) { _toast('Falha ao capturar' + _detail(e), 'error'); return; }
+    _toast('Capturado no inbox', 'success');
+    AXS.scope = 'inbox';
+    if (typeof acervoStudioRenderNav === 'function') await acervoStudioRenderNav();
+  }
+  window.acervoStudioSubmitCapture = acervoStudioSubmitCapture;
 
   function acervoStudioToggle() { if (AXS.open) _close(); else _open(); }
   window.acervoStudioToggle = acervoStudioToggle;
