@@ -417,3 +417,60 @@ def test_read_and_list_envelopes(acervo):
     ids = [e["intake_id"] for e in listing]
     assert set(ids) == {m1["intake_id"], m2["intake_id"]}
     assert all("title" in e and "status" in e for e in listing)
+
+
+# ── Phase 2a T2: intake create routes (text/link/upload base64) ────────────
+
+def test_intake_text_route_creates_envelope(acervo, session_ok, jcap):
+    h = _Handler("/api/acervo/x/intake/text")
+    studio.handle_studio_post(h, {"session_id": "sid1", "caption": "hi", "text": "hello world"})
+    assert jcap["status"] == 200
+    iid = jcap["obj"]["intake_id"]
+    assert iid.startswith("int_") and jcap["obj"]["ok"] is True
+    env = acervo / "_inbox" / "incoming" / iid
+    assert (env / "original" / "note.md").read_text(encoding="utf-8") == "hello world"
+
+
+def test_intake_link_route(acervo, session_ok, jcap):
+    h = _Handler("/api/acervo/x/intake/link")
+    studio.handle_studio_post(h, {"session_id": "sid1", "url": "https://example.com"})
+    assert jcap["status"] == 200
+    env = acervo / "_inbox" / "incoming" / jcap["obj"]["intake_id"]
+    assert (env / "original" / "source.txt").read_text(encoding="utf-8") == "https://example.com"
+
+
+def test_intake_upload_base64(acervo, session_ok, jcap):
+    b64 = _b64.b64encode(b"PDFDATA").decode("ascii")
+    h = _Handler("/api/acervo/x/intake/upload")
+    studio.handle_studio_post(h, {"session_id": "sid1", "filename": "report.pdf",
+                                  "mime": "application/pdf", "content_b64": b64})
+    assert jcap["status"] == 200
+    env = acervo / "_inbox" / "incoming" / jcap["obj"]["intake_id"]
+    assert (env / "original" / "report.pdf").read_bytes() == b"PDFDATA"
+
+
+def test_intake_requires_session(acervo, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "_resolve_session_workspace", lambda sid: None)
+    h = _Handler("/api/acervo/x/intake/text")
+    studio.handle_studio_post(h, {"session_id": "bad", "text": "x"})
+    assert jcap["status"] in (400, 404)
+
+
+def test_intake_upload_too_large_413(acervo, session_ok, jcap):
+    big = _b64.b64encode(b"x" * (studio._MAX_INTAKE_BYTES + 1)).decode("ascii")
+    h = _Handler("/api/acervo/x/intake/upload")
+    studio.handle_studio_post(h, {"session_id": "sid1", "filename": "big.bin", "content_b64": big})
+    assert jcap["status"] == 413
+
+
+def test_intake_empty_text_rejected(acervo, session_ok, jcap):
+    h = _Handler("/api/acervo/x/intake/text")
+    studio.handle_studio_post(h, {"session_id": "sid1", "text": "   "})
+    assert jcap["status"] == 400
+
+
+def test_intake_bad_base64_rejected(acervo, session_ok, jcap):
+    h = _Handler("/api/acervo/x/intake/upload")
+    studio.handle_studio_post(h, {"session_id": "sid1", "filename": "x.bin",
+                                  "content_b64": "!!!not base64!!!"})
+    assert jcap["status"] == 400

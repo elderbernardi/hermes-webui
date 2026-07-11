@@ -19,6 +19,7 @@ happens through late ``import api.routes as routes`` inside functions to avoid
 a circular import at module load (the MOD-009 idiom).
 """
 
+import base64
 import datetime
 import json
 import os
@@ -292,6 +293,84 @@ def handle_download(handler, parsed):
     return _download_file(handler, routes, rel)
 
 
+# region: intake (Phase 2a — capture; agentless)
+
+def _intake_session(handler, routes, body):
+    """Shared session gate for intake POSTs. Returns sid or None (after emitting
+    the error response)."""
+    sid = str((body or {}).get("session_id", "") or "").strip()
+    if not sid:
+        routes.bad(handler, "session_id is required")
+        return None
+    if not routes._resolve_session_workspace(sid):
+        routes.bad(handler, "Session not found", 404)
+        return None
+    return sid
+
+
+def _content_type_for_mime(mime, filename):
+    m = (mime or "").lower()
+    if m.startswith("image/"):
+        return "image"
+    if m.startswith("audio/"):
+        return "audio"
+    if m.startswith("video/"):
+        return "video"
+    if m in ("application/zip", "application/x-zip-compressed") or \
+       str(filename or "").lower().endswith(".zip"):
+        return "zip"
+    return "document"
+
+
+def handle_intake_create(handler, body, kind):
+    """POST /api/acervo/x/intake/{text|link|upload} — write an envelope to
+    _inbox/incoming/. No agent, no semantic write (input is not memory)."""
+    import api.routes as routes
+    body = body or {}
+    sid = _intake_session(handler, routes, body)
+    if sid is None:
+        return True
+    caption = str(body.get("caption", "") or "").strip()
+    if kind == "text":
+        text = str(body.get("text", "") or "")
+        if not text.strip():
+            return routes.bad(handler, "text is required")
+        payload, ctype, filename, mime = text.encode("utf-8"), "text", "", "text/markdown"
+    elif kind == "link":
+        url = str(body.get("url", "") or "").strip()
+        if not url:
+            return routes.bad(handler, "url is required")
+        if not caption:
+            caption = url
+        payload, ctype, filename, mime = url.encode("utf-8"), "link", "", "text/uri-list"
+    elif kind == "upload":
+        b64 = str(body.get("content_b64", "") or "")
+        filename = str(body.get("filename", "") or "")
+        mime = str(body.get("mime", "") or "")
+        if not b64:
+            return routes.bad(handler, "content_b64 is required")
+        # Cheap pre-check on encoded length before decoding (base64 ~ 4/3 of raw).
+        if len(b64) > (_MAX_INTAKE_BYTES // 3) * 4 + 8:
+            return routes.j(handler, {"error": "file too large"}, status=413)
+        try:
+            payload = base64.b64decode(b64, validate=True)
+        except (ValueError, TypeError):
+            return routes.bad(handler, "invalid base64 payload")
+        if len(payload) > _MAX_INTAKE_BYTES:
+            return routes.j(handler, {"error": "file too large"}, status=413)
+        if not payload:
+            return routes.bad(handler, "empty payload")
+        ctype = _content_type_for_mime(mime, filename)
+    else:
+        return routes.bad(handler, "unknown intake kind", 404)
+    root = routes._acervo_root()
+    manifest = _write_envelope(
+        root, content_type=ctype, caption=caption, filename=filename,
+        mime=mime, payload=payload, session_id=sid)
+    return routes.j(handler, {"ok": True, "intake_id": manifest["intake_id"],
+                              "manifest": manifest})
+
+
 # region: dispatchers (delegation targets of the MOD-009 fallbacks)
 
 def handle_studio_get(handler, parsed):
@@ -303,6 +382,13 @@ def handle_studio_get(handler, parsed):
 
 
 def handle_studio_post(handler, body):
-    """Route Studio POST sub-paths (none in Phase 1; Phase 2 adds intake/*)."""
+    """Route Studio POST sub-paths. Phase 2a adds intake/{text,link,upload}."""
     import api.routes as routes
+    path = (getattr(handler, "path", "") or "").split("?", 1)[0]
+    if path == "/api/acervo/x/intake/text":
+        return handle_intake_create(handler, body, "text")
+    if path == "/api/acervo/x/intake/link":
+        return handle_intake_create(handler, body, "link")
+    if path == "/api/acervo/x/intake/upload":
+        return handle_intake_create(handler, body, "upload")
     return routes.bad(handler, "unknown acervo explorer endpoint", 404)
