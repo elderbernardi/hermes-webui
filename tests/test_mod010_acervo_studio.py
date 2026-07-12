@@ -547,3 +547,238 @@ def test_intake_detail_requires_session(acervo, jcap, monkeypatch):
     h = _Handler("/api/acervo/x/intake/item")
     studio.handle_studio_get(h, _get("/api/acervo/x/intake/item?session_id=ghost&id=int_20990101_000000_x"))
     assert jcap["status"] == 404
+
+
+# ── Phase 2b Task 1: agent mediation — propose_triage (mocked agent) ─────────
+import api.acervo_studio_agent as studio_agent
+
+
+def _mk_env(acervo, caption="a client note"):
+    return studio._write_envelope(acervo, content_type="text", caption=caption,
+                                  filename="", mime="", payload=b"cliente ACME pediu proposta",
+                                  session_id="s")
+
+
+def test_propose_triage_parses_valid_proposal(acervo, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"scope":"micro","slug":"acme","nature":"knowledge",'
+                                            '"title":"Proposta ACME","rationale":"cliente","keep_in_inbox":false}')
+    out = studio_agent.propose_triage(acervo, m["intake_id"])
+    assert out["ok"] is True
+    assert out["proposal"]["scope"] == "micro"
+    assert out["proposal"]["slug"] == "acme"
+    assert out["proposal"]["nature"] == "knowledge"
+    assert out["proposal"]["title"] == "Proposta ACME"
+
+
+def test_propose_triage_handles_fenced_json(acervo, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: 'Sure!\n```json\n{"scope":"global","nature":"knowledge",'
+                                            '"title":"Nota","keep_in_inbox":false}\n```\nDone.')
+    out = studio_agent.propose_triage(acervo, m["intake_id"])
+    assert out["ok"] is True and out["proposal"]["scope"] == "global"
+    assert out["proposal"]["slug"] == ""   # non-micro drops slug
+
+
+def test_propose_triage_offline_when_agent_unavailable(acervo, monkeypatch):
+    m = _mk_env(acervo)
+    def _boom(sp, up, **k):
+        raise studio_agent.AgentUnavailable("no runtime")
+    monkeypatch.setattr(studio_agent, "_run_agent_text", _boom)
+    out = studio_agent.propose_triage(acervo, m["intake_id"])
+    assert out == {"ok": False, "offline": True}
+
+
+def test_propose_triage_rejects_bad_scope(acervo, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"scope":"../etc","title":"x"}')
+    out = studio_agent.propose_triage(acervo, m["intake_id"])
+    assert out["ok"] is False and "error" in out
+
+
+def test_propose_triage_micro_requires_slug(acervo, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"scope":"micro","slug":"","title":"x"}')
+    out = studio_agent.propose_triage(acervo, m["intake_id"])
+    assert out["ok"] is False
+
+
+def test_propose_triage_missing_envelope(acervo, monkeypatch):
+    monkeypatch.setattr(studio_agent, "_run_agent_text", lambda sp, up, **k: "{}")
+    out = studio_agent.propose_triage(acervo, "int_20990101_000000_nope")
+    assert out["ok"] is False and out["error"] == "envelope not found"
+
+
+def test_propose_triage_unparseable(acervo, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(studio_agent, "_run_agent_text", lambda sp, up, **k: "no json here at all")
+    out = studio_agent.propose_triage(acervo, m["intake_id"])
+    assert out["ok"] is False and "error" in out
+
+
+# ── Phase 2b Task 2: triage route (POST x/intake/item/triage) ───────────────
+
+def test_triage_route_happy(acervo, session_ok, jcap, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"scope":"micro","slug":"acme","nature":"knowledge",'
+                                            '"title":"ACME","keep_in_inbox":false}')
+    h = _Handler("/api/acervo/x/intake/item/triage")
+    studio.handle_studio_post(h, {"session_id": "sid1", "id": m["intake_id"]})
+    assert jcap["status"] == 200
+    assert jcap["obj"]["proposal"]["slug"] == "acme"
+    # proposal persisted to routing.json
+    rj = json.loads((acervo / "_inbox" / "incoming" / m["intake_id"] / "routing.json")
+                    .read_text(encoding="utf-8"))
+    assert rj["proposal"]["scope"] == "micro"
+
+
+def test_triage_route_offline(acervo, session_ok, jcap, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    def _boom(sp, up, **k):
+        raise studio_agent.AgentUnavailable("no runtime")
+    monkeypatch.setattr(studio_agent, "_run_agent_text", _boom)
+    h = _Handler("/api/acervo/x/intake/item/triage")
+    studio.handle_studio_post(h, {"session_id": "sid1", "id": m["intake_id"]})
+    # operational states => 200 with ok flag (so the UI renders them calmly)
+    assert jcap["status"] == 200 and jcap["obj"]["offline"] is True and jcap["obj"]["ok"] is False
+
+
+def test_triage_route_missing_envelope_404(acervo, session_ok, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    h = _Handler("/api/acervo/x/intake/item/triage")
+    studio.handle_studio_post(h, {"session_id": "sid1", "id": "int_20990101_000000_nope"})
+    assert jcap["status"] == 404
+
+
+def test_triage_route_bad_id_400(acervo, session_ok, jcap):
+    h = _Handler("/api/acervo/x/intake/item/triage")
+    studio.handle_studio_post(h, {"session_id": "sid1", "id": "../../etc"})
+    assert jcap["status"] == 400
+
+
+def test_triage_route_requires_session(acervo, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "_resolve_session_workspace", lambda sid: None)
+    h = _Handler("/api/acervo/x/intake/item/triage")
+    studio.handle_studio_post(h, {"session_id": "ghost", "id": "int_20990101_000000_x"})
+    assert jcap["status"] in (400, 404)
+
+
+# ── Phase 2b Task 3: promote route (agent crafts body, server writes via acervoctl) ──
+
+def _mock_commit_ok(monkeypatch, acervo):
+    """Mock the deterministic acervoctl write to succeed with a receipt, and
+    actually drop a page file so created_path is real-ish."""
+    def _fake(root, slug, nature, title, body_md, class_name, description, tags=None):
+        rel = "micro/%s/%s/%s.md" % (slug, nature, studio._slugify(title))
+        p = acervo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(body_md, encoding="utf-8")
+        return {"status": "committed", "microverso": slug, "nature": nature,
+                "relative_output": rel, "entry_type": "CREATED"}
+    monkeypatch.setattr(studio_agent, "_commit_via_acervoctl", _fake)
+
+
+def _routing(slug="acme", nature="knowledge", title="Proposta ACME", scope="micro"):
+    return {"scope": scope, "slug": slug, "nature": nature, "title": title}
+
+
+def test_promote_happy_writes_and_moves(acervo, session_ok, jcap, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"body_markdown":"# Proposta\\n\\ncorpo","class":"volátil","description":"d"}')
+    _mock_commit_ok(monkeypatch, acervo)
+    h = _Handler("/api/acervo/x/intake/item/promote")
+    studio.handle_studio_post(h, {"session_id": "sid1", "id": m["intake_id"], "routing": _routing()})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is True
+    assert jcap["obj"]["created_path"] == "micro/acme/knowledge/proposta-acme.md"
+    assert (acervo / "micro/acme/knowledge/proposta-acme.md").is_file()
+    # envelope moved incoming -> promoted
+    assert not (acervo / "_inbox" / "incoming" / m["intake_id"]).exists()
+    assert (acervo / "_inbox" / "promoted" / m["intake_id"]).is_dir()
+
+
+def test_promote_rejects_non_micro_scope(acervo, session_ok, jcap, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    monkeypatch.setattr(studio_agent, "_run_agent_text", lambda sp, up, **k: "{}")
+    h = _Handler("/api/acervo/x/intake/item/promote")
+    studio.handle_studio_post(h, {"session_id": "sid1", "id": m["intake_id"],
+                                  "routing": _routing(scope="global")})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is False and "micro" in jcap["obj"]["error"]
+    # nothing moved
+    assert (acervo / "_inbox" / "incoming" / m["intake_id"]).is_dir()
+
+
+def test_promote_offline_keeps_envelope(acervo, session_ok, jcap, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    def _boom(sp, up, **k):
+        raise studio_agent.AgentUnavailable("no runtime")
+    monkeypatch.setattr(studio_agent, "_run_agent_text", _boom)
+    h = _Handler("/api/acervo/x/intake/item/promote")
+    studio.handle_studio_post(h, {"session_id": "sid1", "id": m["intake_id"], "routing": _routing()})
+    assert jcap["status"] == 200 and jcap["obj"]["offline"] is True
+    assert (acervo / "_inbox" / "incoming" / m["intake_id"]).is_dir()  # not moved
+
+
+def test_promote_write_rejected_keeps_envelope(acervo, session_ok, jcap, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"body_markdown":"x","class":"volátil"}')
+    def _reject(*a, **k):
+        raise studio_agent.PromoteError("write rejected: cross_microverso_write_blocked")
+    monkeypatch.setattr(studio_agent, "_commit_via_acervoctl", _reject)
+    h = _Handler("/api/acervo/x/intake/item/promote")
+    studio.handle_studio_post(h, {"session_id": "sid1", "id": m["intake_id"], "routing": _routing()})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is False and "rejected" in jcap["obj"]["error"]
+    assert (acervo / "_inbox" / "incoming" / m["intake_id"]).is_dir()  # not moved
+
+
+def test_promote_requires_routing(acervo, session_ok, jcap, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    h = _Handler("/api/acervo/x/intake/item/promote")
+    studio.handle_studio_post(h, {"session_id": "sid1", "id": m["intake_id"]})
+    assert jcap["status"] == 400
+
+
+def test_promote_scaffolds_microverso_meta(acervo, monkeypatch):
+    # _scaffold_microverso creates _meta/index.md + log.md when absent
+    studio_agent._scaffold_microverso(acervo, "brandnew")
+    assert (acervo / "micro" / "brandnew" / "_meta" / "index.md").read_text().startswith("# Index")
+    assert (acervo / "micro" / "brandnew" / "_meta" / "log.md").read_text().startswith("# Log")
+
+
+# ── Phase 2b review fixes: promote write-boundary + session gate ────────────
+
+@pytest.mark.parametrize("bad_slug", ["../evil", "_meta", ".quarantine", "a/b", ""])
+def test_promote_rejects_bad_slug(acervo, session_ok, jcap, monkeypatch, bad_slug):
+    """The module's own write-boundary guard: a bad slug is rejected BEFORE any
+    agent turn or write, and the envelope is not moved."""
+    m = _mk_env(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    # if the guard is bypassed the agent would be called — make that loud
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: (_ for _ in ()).throw(AssertionError("guard bypassed")))
+    h = _Handler("/api/acervo/x/intake/item/promote")
+    studio.handle_studio_post(h, {"session_id": "sid1", "id": m["intake_id"],
+                                  "routing": _routing(slug=bad_slug)})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is False
+    assert (acervo / "_inbox" / "incoming" / m["intake_id"]).is_dir()  # not moved
+
+
+def test_promote_requires_session(acervo, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "_resolve_session_workspace", lambda sid: None)
+    h = _Handler("/api/acervo/x/intake/item/promote")
+    studio.handle_studio_post(h, {"session_id": "ghost", "id": "int_20990101_000000_x",
+                                  "routing": _routing()})
+    assert jcap["status"] in (400, 404)

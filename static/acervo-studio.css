@@ -120,3 +120,6 @@
 .axs-cap-add:hover { border-style: solid; }
 .axs-env-files { margin: 8px 0; padding-left: 18px; opacity: .8; font-size: 13px; }
 .axs-env-note { margin-top: 14px; padding: 8px 10px; border-radius: 6px; background: rgba(127,127,127,.12); font-size: 13px; opacity: .85; }
+.axs-prop { margin-top: 12px; padding: 12px; border: 1px solid var(--axs-border, #3a3a3a); border-radius: 8px; }
+.axs-prop-head { font-weight: 600; margin-bottom: 8px; }
+.axs-prop-why { font-weight: 400; opacity: .75; }

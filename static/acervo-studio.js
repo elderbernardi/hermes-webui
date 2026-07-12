@@ -679,16 +679,132 @@
     }
     var fileList = files.map(function (f) { return '<li>' + _esc(f) + '</li>'; }).join('');
     reader.innerHTML =
-      '<div class="axs-crumb"><b>📥 Inbox</b> › ' + _esc(env.intake_id || iid) + '</div>' +
+      '<div class="axs-crumb"><b>📥 Inbox</b> › ' + _esc(env.intake_id || iid) +
+      '  <div class="axs-acts">' +
+      '    <button type="button" class="axs-act" data-env-triage="' + _esc(iid) + '">🔎 Triar com IA</button>' +
+      '  </div></div>' +
       '<div class="axs-doc axs-env">' +
       '  <div class="axs-fm">' + chips + '</div>' +
       '  <h1 class="axs-title">' + _esc(caption) + '</h1>' +
       (fileList ? '<ul class="axs-env-files">' + fileList + '</ul>' : '') +
       body +
-      '  <div class="axs-env-note">Aguardando triagem (Fase 2b). Nada foi escrito na memória semântica.</div>' +
+      '  <div class="axs-env-proposal" data-env-proposal></div>' +
       '</div>';
+    reader.querySelector('[data-env-triage]').addEventListener('click', function () {
+      acervoStudioTriage(iid);
+    });
+    // Show the last persisted proposal (if any) so re-opening is stateful.
+    var existing = env.routing && env.routing.proposal;
+    var pc = reader.querySelector('[data-env-proposal]');
+    if (existing) _renderProposal(pc, iid, existing);
+    else pc.innerHTML = '<div class="axs-env-note">Ainda sem triagem. "Triar com IA" propõe um destino — nada é escrito na memória sem sua confirmação.</div>';
   }
   window.acervoStudioOpenEnvelope = acervoStudioOpenEnvelope;
+
+  var AXS_PROMOTE_SCOPES = ['micro', 'global', 'shared', 'macro'];
+
+  function _renderProposal(container, iid, p) {
+    if (!container) return;
+    p = p || {};
+    var scopeSel = AXS_PROMOTE_SCOPES.map(function (s) {
+      return '<option value="' + s + '"' + (p.scope === s ? ' selected' : '') + '>' + s + '</option>';
+    }).join('');
+    var natSel = '<option value="">—</option>' + AXS_NATURES.map(function (n) {
+      return '<option value="' + n + '"' + (p.nature === n ? ' selected' : '') + '>' + n + '</option>';
+    }).join('');
+    container.innerHTML =
+      '<div class="axs-prop">' +
+      '  <div class="axs-prop-head">Proposta de triagem' +
+      (p.rationale ? ' <span class="axs-prop-why">— ' + _esc(p.rationale) + '</span>' : '') + '</div>' +
+      '  <div class="axs-frow">' +
+      '    <label class="axs-field"><span>Escopo</span><select data-prop="scope">' + scopeSel + '</select></label>' +
+      '    <label class="axs-field"><span>Microverso (slug)</span>' +
+      '      <input type="text" data-prop="slug" value="' + _esc(p.slug || '') + '" placeholder="ex: acme"></label>' +
+      '    <label class="axs-field"><span>Natureza</span><select data-prop="nature">' + natSel + '</select></label>' +
+      '  </div>' +
+      '  <label class="axs-field"><span>Título</span>' +
+      '    <input type="text" data-prop="title" value="' + _esc(p.title || '') + '"></label>' +
+      '  <div class="axs-acts">' +
+      '    <button type="button" class="axs-act axs-act-primary" data-prop-promote="' + _esc(iid) + '">✓ Promover à memória</button>' +
+      '  </div>' +
+      '  <div class="axs-env-note">Você aprova antes de escrever: o Hermes só grava a página quando você clica em Promover (propose-then-approve).</div>' +
+      '</div>';
+    container.querySelector('[data-prop-promote]').addEventListener('click', function () {
+      var routing = {
+        scope: (container.querySelector('[data-prop="scope"]') || {}).value || '',
+        slug: (container.querySelector('[data-prop="slug"]') || {}).value || '',
+        nature: (container.querySelector('[data-prop="nature"]') || {}).value || '',
+        title: (container.querySelector('[data-prop="title"]') || {}).value || ''
+      };
+      if (typeof acervoStudioPromote === 'function') acervoStudioPromote(iid, routing);
+      else _toast('Promover disponível em breve', 'error');
+    });
+  }
+
+  async function acervoStudioTriage(iid) {
+    var root = _root();
+    var pc = root && root.querySelector('[data-env-proposal]');
+    if (!pc) return;
+    pc.innerHTML = '<div class="axs-env-note">Triando com o Hermes…</div>';
+    var r;
+    try {
+      r = await api('/api/acervo/x/intake/item/triage', {
+        method: 'POST', body: JSON.stringify({ session_id: _sid(), id: iid })
+      });
+    } catch (e) {
+      // operational states come back as 200 {ok:false,...}; a throw here is a
+      // malformed request or network error.
+      pc.innerHTML = '<div class="axs-env-note">' + _esc('Falha na triagem' + _detail(e)) + '</div>';
+      return;
+    }
+    if (r && r.ok && r.proposal) _renderProposal(pc, iid, r.proposal);
+    else if (r && r.offline) pc.innerHTML = '<div class="axs-env-note">Agente offline — tente novamente.</div>';
+    else pc.innerHTML = '<div class="axs-env-note">Não foi possível propor um destino.</div>';
+  }
+  window.acervoStudioTriage = acervoStudioTriage;
+
+  async function acervoStudioPromote(iid, routing) {
+    routing = routing || {};
+    // Promote writes only into a microverso (the scope guard denies global/
+    // shared/macro). Guide the user instead of failing server-side.
+    if (routing.scope !== 'micro' || !String(routing.slug || '').trim()) {
+      _toast('Promover grava num microverso: escolha escopo "micro" + um slug', 'error');
+      return;
+    }
+    if (!String(routing.title || '').trim()) { _toast('Informe um título', 'error'); return; }
+    var root = _root();
+    var pc = root && root.querySelector('[data-env-proposal]');
+    var btn = pc && pc.querySelector('[data-prop-promote]');
+    if (btn) btn.disabled = true;
+    var r;
+    try {
+      r = await api('/api/acervo/x/intake/item/promote', {
+        method: 'POST',
+        body: JSON.stringify({ session_id: _sid(), id: iid, routing: routing }),
+        timeoutMs: 120000  // an agent turn + deterministic write can take a while
+      });
+    } catch (e) {
+      if (btn) btn.disabled = false;
+      _toast('Falha ao promover' + _detail(e), 'error');
+      return;
+    }
+    if (r && r.ok) {
+      _toast('Promovido à memória' + (r.created_path ? ': ' + r.created_path : ''), 'success');
+      AXS.scope = 'inbox';
+      if (typeof acervoStudioRenderNav === 'function') await acervoStudioRenderNav();
+      if (r.created_path && typeof acervoStudioOpenPage === 'function') {
+        acervoStudioOpenPage(r.created_path);
+      }
+      return;
+    }
+    if (btn) btn.disabled = false;
+    if (r && r.offline) {
+      _toast('Agente offline — tente novamente', 'error');
+    } else {
+      _toast('Não foi possível promover' + (r && r.error ? ': ' + r.error : ''), 'error');
+    }
+  }
+  window.acervoStudioPromote = acervoStudioPromote;
 
   // ── Phase 2a: intake capture ─────────────────────────────────────────────
   function _readFileB64(file) {
