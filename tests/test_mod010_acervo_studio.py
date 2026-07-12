@@ -782,3 +782,67 @@ def test_promote_requires_session(acervo, jcap, monkeypatch):
     studio.handle_studio_post(h, {"session_id": "ghost", "id": "int_20990101_000000_x",
                                   "routing": _routing()})
     assert jcap["status"] in (400, 404)
+
+
+# ── Phase 3 Task 1: publish module — safety + tools resolution ──────────────
+
+import api.acervo_studio_publish as studio_pub
+
+
+def _mk_artifact(acervo, art_id="art_20260712_relatorio", status="draft",
+                 title="Relatório"):
+    d = acervo / "_artifacts" / "items" / art_id
+    (d / "source").mkdir(parents=True)
+    (d / "exports").mkdir()
+    (d / "source" / "source.md").write_text("# rel\n\nconteudo\n", encoding="utf-8")
+    (d / "manifest.json").write_text(json.dumps({
+        "artifact_id": art_id, "title": title, "status": status,
+        "artifact_type": "document", "source_type": "markdown",
+        "source_path": "source/source.md",
+        "provenance": {"created_at": "2026-07-12T00:00:00Z"},
+        "drive_target": {"provider": "google_drive",
+                         "folder_path": "exocortex/inbox",
+                         "visibility": "private"},
+    }, ensure_ascii=False), encoding="utf-8")
+    return d
+
+
+@pytest.mark.parametrize("bad", ["", "../evil", "a/b", "a\\b", ".hidden", "x" * 129])
+def test_pub_valid_artifact_id_rejects(bad):
+    assert studio_pub._valid_artifact_id(bad) is False
+
+
+def test_pub_valid_artifact_id_accepts():
+    assert studio_pub._valid_artifact_id("art_20260712_relatorio") is True
+
+
+def test_pub_artifact_dir_resolves(acervo):
+    d = _mk_artifact(acervo)
+    assert studio_pub._artifact_dir(acervo, "art_20260712_relatorio") == d
+
+
+def test_pub_artifact_dir_missing_none(acervo):
+    assert studio_pub._artifact_dir(acervo, "art_20990101_nope") is None
+
+
+def test_pub_artifact_dir_blocks_symlink_into_quarantine(acervo):
+    (acervo / ".quarantine" / "evil").mkdir(parents=True)
+    (acervo / "_artifacts" / "items").mkdir(parents=True, exist_ok=True)
+    (acervo / "_artifacts" / "items" / "linked").symlink_to(
+        acervo / ".quarantine" / "evil", target_is_directory=True)
+    assert studio_pub._artifact_dir(acervo, "linked") is None
+
+
+def test_pub_resolve_tools_dir_prefers_root_copy(acervo, monkeypatch):
+    tools = acervo / "global" / "tools"
+    (tools / "harness").mkdir(parents=True)
+    (tools / "artifact_publish.py").write_text("# stub\n", encoding="utf-8")
+    (tools / "harness" / "validate_artifact_manifest.py").write_text(
+        "# stub\n", encoding="utf-8")
+    assert studio_pub._resolve_tools_dir(acervo) == str(tools)
+
+
+def test_pub_resolve_tools_dir_none_when_absent(acervo, tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "nohermes"))
+    monkeypatch.setenv("EXOCORTEX_HOME", str(tmp_path / "noexo"))
+    assert studio_pub._resolve_tools_dir(acervo) is None
