@@ -138,7 +138,26 @@ def _read_envelope(root, iid):
             if f.is_file():
                 files.append("original/" + f.name)
     m["files"] = files
+    rt = d / "routing.json"
+    if rt.is_file():
+        try:
+            m["routing"] = json.loads(rt.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
     return m
+
+
+def _write_routing(root, iid, proposal):
+    """Persist a triage proposal into the envelope's routing.json (best-effort)."""
+    d = _envelope_dir(root, iid)
+    if d is None:
+        return
+    try:
+        (d / "routing.json").write_text(
+            json.dumps({"proposal": proposal}, ensure_ascii=False, indent=2),
+            encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _list_envelopes(root):
@@ -416,6 +435,38 @@ def handle_intake_detail(handler, parsed):
     return routes.j(handler, {"envelope": env})
 
 
+def handle_intake_triage(handler, body):
+    """POST /api/acervo/x/intake/item/triage {session_id, id} — Hermes triage
+    proposal (READ-ONLY cognition; persists routing.json). No semantic write."""
+    import api.routes as routes
+    import api.acervo_studio_agent as agent
+    body = body or {}
+    sid = _intake_session(handler, routes, body)
+    if sid is None:
+        return True
+    iid = str(body.get("id", "") or "").strip()
+    if not _valid_intake_id(iid):
+        return routes.bad(handler, "invalid intake id")
+    root = routes._acervo_root()
+    if _envelope_dir(root, iid) is None:
+        return routes.j(handler, {"error": "envelope not found"}, status=404)
+    session = None
+    try:
+        session = routes.get_session(sid)
+    except Exception:
+        session = None
+    result = agent.propose_triage(root, iid, session=session)
+    if result.get("ok"):
+        _write_routing(root, iid, result["proposal"])
+        return routes.j(handler, {"ok": True, "proposal": result["proposal"]})
+    if result.get("offline"):
+        return routes.j(handler, {"ok": False, "offline": True,
+                                  "message": "agente offline — tente novamente"},
+                        status=503)
+    return routes.j(handler, {"ok": False,
+                              "error": result.get("error", "triage failed")}, status=502)
+
+
 # region: dispatchers (delegation targets of the MOD-009 fallbacks)
 
 def handle_studio_get(handler, parsed):
@@ -440,4 +491,6 @@ def handle_studio_post(handler, body):
         return handle_intake_create(handler, body, "link")
     if path == "/api/acervo/x/intake/upload":
         return handle_intake_create(handler, body, "upload")
+    if path == "/api/acervo/x/intake/item/triage":
+        return handle_intake_triage(handler, body)
     return routes.bad(handler, "unknown acervo explorer endpoint", 404)

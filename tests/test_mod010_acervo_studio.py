@@ -618,3 +618,52 @@ def test_propose_triage_unparseable(acervo, monkeypatch):
     monkeypatch.setattr(studio_agent, "_run_agent_text", lambda sp, up, **k: "no json here at all")
     out = studio_agent.propose_triage(acervo, m["intake_id"])
     assert out["ok"] is False and "error" in out
+
+
+# ── Phase 2b Task 2: triage route (POST x/intake/item/triage) ───────────────
+
+def test_triage_route_happy(acervo, session_ok, jcap, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"scope":"micro","slug":"acme","nature":"knowledge",'
+                                            '"title":"ACME","keep_in_inbox":false}')
+    h = _Handler("/api/acervo/x/intake/item/triage")
+    studio.handle_studio_post(h, {"session_id": "sid1", "id": m["intake_id"]})
+    assert jcap["status"] == 200
+    assert jcap["obj"]["proposal"]["slug"] == "acme"
+    # proposal persisted to routing.json
+    rj = json.loads((acervo / "_inbox" / "incoming" / m["intake_id"] / "routing.json")
+                    .read_text(encoding="utf-8"))
+    assert rj["proposal"]["scope"] == "micro"
+
+
+def test_triage_route_offline_503(acervo, session_ok, jcap, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    def _boom(sp, up, **k):
+        raise studio_agent.AgentUnavailable("no runtime")
+    monkeypatch.setattr(studio_agent, "_run_agent_text", _boom)
+    h = _Handler("/api/acervo/x/intake/item/triage")
+    studio.handle_studio_post(h, {"session_id": "sid1", "id": m["intake_id"]})
+    assert jcap["status"] == 503 and jcap["obj"]["offline"] is True
+
+
+def test_triage_route_missing_envelope_404(acervo, session_ok, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    h = _Handler("/api/acervo/x/intake/item/triage")
+    studio.handle_studio_post(h, {"session_id": "sid1", "id": "int_20990101_000000_nope"})
+    assert jcap["status"] == 404
+
+
+def test_triage_route_bad_id_400(acervo, session_ok, jcap):
+    h = _Handler("/api/acervo/x/intake/item/triage")
+    studio.handle_studio_post(h, {"session_id": "sid1", "id": "../../etc"})
+    assert jcap["status"] == 400
+
+
+def test_triage_route_requires_session(acervo, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "_resolve_session_workspace", lambda sid: None)
+    h = _Handler("/api/acervo/x/intake/item/triage")
+    studio.handle_studio_post(h, {"session_id": "ghost", "id": "int_20990101_000000_x"})
+    assert jcap["status"] in (400, 404)
