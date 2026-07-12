@@ -579,6 +579,73 @@ def handle_publish(handler, body):
                               "error": result.get("error", "publish failed")})
 
 
+# region: assist + ask (Phase 4 — proposal-only cognition; never writes)
+
+def handle_assist(handler, body):
+    """POST /api/acervo/x/assist {session_id, path, op} — proposal-only
+    cognition on ONE existing page (rewrite|summarize|suggest_tags|
+    contradiction_check). Never writes: applying an edit goes through x/save."""
+    import api.routes as routes
+    import api.acervo_studio_agent as agent
+    body = body or {}
+    sid = _intake_session(handler, routes, body)
+    if sid is None:
+        return True
+    op = str(body.get("op", "") or "").strip().lower()
+    if op not in agent._ASSIST_OPS:
+        return routes.bad(handler, "unknown assist op")
+    rel = str(body.get("path", "") or "").strip()
+    if not rel:
+        return routes.bad(handler, "path is required")
+    root = routes._acervo_root()
+    session = None
+    try:
+        session = routes.get_session(sid)
+    except Exception:
+        session = None
+    result = agent.propose_assist(root, rel, op, session=session)
+    if result.get("ok"):
+        return routes.j(handler, {"ok": True, "op": result["op"],
+                                  "proposal": result["proposal"]})
+    if result.get("offline"):
+        return routes.j(handler, {"ok": False, "offline": True,
+                                  "message": "agente offline — tente novamente"})
+    return routes.j(handler, {"ok": False,
+                              "error": result.get("error", "assist failed")})
+
+
+def handle_ask(handler, body):
+    """POST /api/acervo/x/ask {session_id, question} — semantic Q&A grounded in
+    retrieved acervo excerpts. Proposal-only (read-only); never writes."""
+    import api.routes as routes
+    import api.acervo_studio_agent as agent
+    body = body or {}
+    sid = _intake_session(handler, routes, body)
+    if sid is None:
+        return True
+    question = str(body.get("question", "") or "").strip()
+    if not question:
+        return routes.bad(handler, "question is required")
+    root = routes._acervo_root()
+    session = None
+    try:
+        session = routes.get_session(sid)
+    except Exception:
+        session = None
+    result = agent.ask_acervo(root, question, session=session)
+    if result.get("ok"):
+        return routes.j(handler, {"ok": True, "answer": result["answer"],
+                                  "sources": result.get("sources", [])})
+    if result.get("offline"):
+        return routes.j(handler, {"ok": False, "offline": True,
+                                  "message": "agente offline — tente novamente"})
+    if result.get("no_context"):
+        return routes.j(handler, {"ok": False, "no_context": True,
+                                  "message": "nada relevante encontrado no acervo"})
+    return routes.j(handler, {"ok": False,
+                              "error": result.get("error", "ask failed")})
+
+
 # region: dispatchers (delegation targets of the MOD-009 fallbacks)
 
 def handle_studio_get(handler, parsed):
@@ -611,4 +678,8 @@ def handle_studio_post(handler, body):
         return handle_publish_prepare(handler, body)
     if path == "/api/acervo/x/publish":
         return handle_publish(handler, body)
+    if path == "/api/acervo/x/assist":
+        return handle_assist(handler, body)
+    if path == "/api/acervo/x/ask":
+        return handle_ask(handler, body)
     return routes.bad(handler, "unknown acervo explorer endpoint", 404)

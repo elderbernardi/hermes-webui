@@ -1338,3 +1338,92 @@ def test_ask_acervo_offline(acervo, monkeypatch):
 def test_ask_acervo_empty_question(acervo):
     out = studio_agent.ask_acervo(acervo, "   ")
     assert out["ok"] is False and "error" in out
+
+
+# ── Phase 4 Task 3: assist + ask routes ──────────────────────────────────────
+
+def test_assist_route_happy(acervo, session_ok, jcap, monkeypatch):
+    rel = _mk_page(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"summary":"resumo curto."}')
+    h = _Handler("/api/acervo/x/assist")
+    studio.handle_studio_post(h, {"session_id": "sid1", "path": rel, "op": "summarize"})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is True
+    assert jcap["obj"]["proposal"]["summary"] == "resumo curto."
+
+
+def test_assist_route_unknown_op_400(acervo, session_ok, jcap):
+    rel = _mk_page(acervo)
+    h = _Handler("/api/acervo/x/assist")
+    studio.handle_studio_post(h, {"session_id": "sid1", "path": rel, "op": "translate"})
+    assert jcap["status"] == 400
+
+
+def test_assist_route_offline_calm(acervo, session_ok, jcap, monkeypatch):
+    rel = _mk_page(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    def _boom(sp, up, **k):
+        raise studio_agent.AgentUnavailable("x")
+    monkeypatch.setattr(studio_agent, "_run_agent_text", _boom)
+    h = _Handler("/api/acervo/x/assist")
+    studio.handle_studio_post(h, {"session_id": "sid1", "path": rel, "op": "rewrite"})
+    assert jcap["status"] == 200 and jcap["obj"]["offline"] is True
+
+
+def test_assist_route_missing_page(acervo, session_ok, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    monkeypatch.setattr(studio_agent, "_run_agent_text", lambda sp, up, **k: "{}")
+    h = _Handler("/api/acervo/x/assist")
+    studio.handle_studio_post(h, {"session_id": "sid1",
+                                  "path": "global/knowledge/nope.md", "op": "rewrite"})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is False
+
+
+def test_assist_route_requires_session(acervo, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "_resolve_session_workspace", lambda sid: None)
+    h = _Handler("/api/acervo/x/assist")
+    studio.handle_studio_post(h, {"session_id": "ghost", "path": "x.md", "op": "rewrite"})
+    assert jcap["status"] in (400, 404)
+
+
+def test_ask_route_happy(acervo, session_ok, jcap, monkeypatch):
+    _mk_page(acervo, "global/knowledge/preco.md",
+             "---\ntitle: Preço\n---\n\nO preço do X é 10.\n")
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"answer":"É 10.","sources":["global/knowledge/preco.md"]}')
+    h = _Handler("/api/acervo/x/ask")
+    studio.handle_studio_post(h, {"session_id": "sid1", "question": "preço do X?"})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is True
+    assert jcap["obj"]["sources"] == ["global/knowledge/preco.md"]
+
+
+def test_ask_route_no_context_calm(acervo, session_ok, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    h = _Handler("/api/acervo/x/ask")
+    studio.handle_studio_post(h, {"session_id": "sid1", "question": "zzz inexistente"})
+    assert jcap["status"] == 200 and jcap["obj"]["no_context"] is True
+
+
+def test_ask_route_empty_question_400(acervo, session_ok, jcap):
+    h = _Handler("/api/acervo/x/ask")
+    studio.handle_studio_post(h, {"session_id": "sid1", "question": "  "})
+    assert jcap["status"] == 400
+
+
+def test_ask_route_requires_session(acervo, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "_resolve_session_workspace", lambda sid: None)
+    h = _Handler("/api/acervo/x/ask")
+    studio.handle_studio_post(h, {"session_id": "ghost", "question": "x"})
+    assert jcap["status"] in (400, 404)
+
+
+def test_post_dispatcher_delegates_assist_and_ask(acervo, session_ok, jcap, monkeypatch):
+    rel = _mk_page(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"summary":"s."}')
+    h = _Handler("/api/acervo/x/assist")
+    ax.handle_acervo_x_post(h, {"session_id": "sid1", "path": rel, "op": "summarize"})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is True
