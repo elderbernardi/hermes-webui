@@ -1203,9 +1203,31 @@
     if (AXS.open && AXS.dirty) { e.preventDefault(); e.returnValue = ''; return ''; }
   });
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', _ensureLauncher);
-  } else {
+  // ── Phase 5: consolidate — retire/redirect the MOD-009 docked panel ──────
+  // The Studio reaches parity, so its entry points funnel to the Studio. We do
+  // NOT edit acervo-explorer.* (rebase-safety): we hide the MOD-009 body
+  // launcher and redirect its global toggle, preserving the original as an
+  // escape hatch. Idempotent; safe if MOD-009 is absent.
+  function _consolidateMod009() {
+    try {
+      if (typeof window.acervoExplorerToggle === 'function' &&
+          window.acervoExplorerToggle !== acervoStudioToggle) {
+        window.__acervoExplorerToggleLegacy = window.acervoExplorerToggle;
+        window.acervoExplorerToggle = function () { acervoStudioToggle(); };
+      }
+      var legacy = document.getElementById('axLauncher');
+      if (legacy) legacy.style.display = 'none';
+    } catch (e) { /* consolidation is best-effort */ }
+  }
+
+  function _bootstrap() {
     _ensureLauncher();
+    _consolidateMod009();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _bootstrap);
+  } else {
+    _bootstrap();
   }
 })();
