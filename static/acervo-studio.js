@@ -679,16 +679,90 @@
     }
     var fileList = files.map(function (f) { return '<li>' + _esc(f) + '</li>'; }).join('');
     reader.innerHTML =
-      '<div class="axs-crumb"><b>📥 Inbox</b> › ' + _esc(env.intake_id || iid) + '</div>' +
+      '<div class="axs-crumb"><b>📥 Inbox</b> › ' + _esc(env.intake_id || iid) +
+      '  <div class="axs-acts">' +
+      '    <button type="button" class="axs-act" data-env-triage="' + _esc(iid) + '">🔎 Triar com IA</button>' +
+      '  </div></div>' +
       '<div class="axs-doc axs-env">' +
       '  <div class="axs-fm">' + chips + '</div>' +
       '  <h1 class="axs-title">' + _esc(caption) + '</h1>' +
       (fileList ? '<ul class="axs-env-files">' + fileList + '</ul>' : '') +
       body +
-      '  <div class="axs-env-note">Aguardando triagem (Fase 2b). Nada foi escrito na memória semântica.</div>' +
+      '  <div class="axs-env-proposal" data-env-proposal></div>' +
       '</div>';
+    reader.querySelector('[data-env-triage]').addEventListener('click', function () {
+      acervoStudioTriage(iid);
+    });
+    // Show the last persisted proposal (if any) so re-opening is stateful.
+    var existing = env.routing && env.routing.proposal;
+    var pc = reader.querySelector('[data-env-proposal]');
+    if (existing) _renderProposal(pc, iid, existing);
+    else pc.innerHTML = '<div class="axs-env-note">Ainda sem triagem. "Triar com IA" propõe um destino — nada é escrito na memória sem sua confirmação.</div>';
   }
   window.acervoStudioOpenEnvelope = acervoStudioOpenEnvelope;
+
+  var AXS_PROMOTE_SCOPES = ['micro', 'global', 'shared', 'macro'];
+
+  function _renderProposal(container, iid, p) {
+    if (!container) return;
+    p = p || {};
+    var scopeSel = AXS_PROMOTE_SCOPES.map(function (s) {
+      return '<option value="' + s + '"' + (p.scope === s ? ' selected' : '') + '>' + s + '</option>';
+    }).join('');
+    var natSel = '<option value="">—</option>' + AXS_NATURES.map(function (n) {
+      return '<option value="' + n + '"' + (p.nature === n ? ' selected' : '') + '>' + n + '</option>';
+    }).join('');
+    container.innerHTML =
+      '<div class="axs-prop">' +
+      '  <div class="axs-prop-head">Proposta de triagem' +
+      (p.rationale ? ' <span class="axs-prop-why">— ' + _esc(p.rationale) + '</span>' : '') + '</div>' +
+      '  <div class="axs-frow">' +
+      '    <label class="axs-field"><span>Escopo</span><select data-prop="scope">' + scopeSel + '</select></label>' +
+      '    <label class="axs-field"><span>Microverso (slug)</span>' +
+      '      <input type="text" data-prop="slug" value="' + _esc(p.slug || '') + '" placeholder="ex: acme"></label>' +
+      '    <label class="axs-field"><span>Natureza</span><select data-prop="nature">' + natSel + '</select></label>' +
+      '  </div>' +
+      '  <label class="axs-field"><span>Título</span>' +
+      '    <input type="text" data-prop="title" value="' + _esc(p.title || '') + '"></label>' +
+      '  <div class="axs-acts">' +
+      '    <button type="button" class="axs-act axs-act-primary" data-prop-promote="' + _esc(iid) + '">✓ Promover à memória</button>' +
+      '  </div>' +
+      '  <div class="axs-env-note">Você aprova antes de escrever: o Hermes só grava a página quando você clica em Promover (propose-then-approve).</div>' +
+      '</div>';
+    container.querySelector('[data-prop-promote]').addEventListener('click', function () {
+      var routing = {
+        scope: (container.querySelector('[data-prop="scope"]') || {}).value || '',
+        slug: (container.querySelector('[data-prop="slug"]') || {}).value || '',
+        nature: (container.querySelector('[data-prop="nature"]') || {}).value || '',
+        title: (container.querySelector('[data-prop="title"]') || {}).value || ''
+      };
+      if (typeof acervoStudioPromote === 'function') acervoStudioPromote(iid, routing);
+      else _toast('Promover disponível em breve', 'error');
+    });
+  }
+
+  async function acervoStudioTriage(iid) {
+    var root = _root();
+    var pc = root && root.querySelector('[data-env-proposal]');
+    if (!pc) return;
+    pc.innerHTML = '<div class="axs-env-note">Triando com o Hermes…</div>';
+    var r;
+    try {
+      r = await api('/api/acervo/x/intake/item/triage', {
+        method: 'POST', body: JSON.stringify({ session_id: _sid(), id: iid })
+      });
+    } catch (e) {
+      // api() throws on non-2xx; surface offline vs generic.
+      var off = e && (e.offline || (e.body && e.body.offline));
+      pc.innerHTML = '<div class="axs-env-note">' +
+        (off ? 'Agente offline — tente novamente.' : ('Falha na triagem' + _detail(e))) + '</div>';
+      return;
+    }
+    if (r && r.ok && r.proposal) _renderProposal(pc, iid, r.proposal);
+    else if (r && r.offline) pc.innerHTML = '<div class="axs-env-note">Agente offline — tente novamente.</div>';
+    else pc.innerHTML = '<div class="axs-env-note">Não foi possível propor um destino.</div>';
+  }
+  window.acervoStudioTriage = acervoStudioTriage;
 
   // ── Phase 2a: intake capture ─────────────────────────────────────────────
   function _readFileB64(file) {
