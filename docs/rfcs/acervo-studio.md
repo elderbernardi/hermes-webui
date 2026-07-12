@@ -5,7 +5,10 @@
 > Exocórtex acervo lifecycle: **navigate · edit · upload · publish · download**,
 > with the Hermes agent woven in as the cognition engine.
 >
-> - **Status:** design (brainstorm-approved 2026-07-02) — not yet planned/implemented.
+> - **Status:** **DELIVERED (Phases 0–5, 2026-07-12)** — merged to `exocortex/stable` and
+>   pushed to the fork origin. Not yet reprovisioned to the running :8787 instance
+>   (owner-gated go-live; see `docs/acervo-studio/GO-LIVE-CHECKLIST.md`). Original design
+>   brainstorm-approved 2026-07-02.
 > - **Author:** Fable (Opus 4.8) with the operator.
 > - **Change mode:** COLLAB (write-coupling to the Exocórtex-governed acervo).
 > - **Builds on:** the MOD-009 `/api/acervo/x/` backend + the MOD-007/008 chat-context bridge.
@@ -347,22 +350,33 @@ Each unit: single purpose, well-defined interface, independently testable.
 
 ---
 
-## 11. Phased delivery
+## 11. Phased delivery — DELIVERED (Phases 0–5, 2026-07-12)
 
-- **Phase 0 — Shell & navigate.** Full-screen view, Chat↔Acervo toggle, Graphite+light
-  themes, `.axs-*`, unified navigator (`tree` +`micro`+`inbox`), reader (reuse MOD-009).
-  *Read-only parity + better navigation. Low risk, no agent dependency.*
-- **Phase 1 — Edit & download & bridge.** Elevated editor (reuse MOD-009 write surface),
-  download (md/raw/zip), stage-to-chat. *Still no agent dependency.*
-- **Phase 2 — Intake (AI-native inbound).** upload/text/link → `_inbox`; Hermes triage
-  proposal; agent-mediated promote. *Depends on §6.2 spike.*
-- **Phase 3 — Publish (outbound).** prepare/quality-gate/Draft-First → Drive receipt.
-- **Phase 4 — Assist & ask.** inline rewrite/summarize/suggest-tags/contradiction;
-  "ask the acervo" semantic search; assistant polish.
-- **Phase 5 — Consolidate.** Retire/redirect the MOD-009 docked panel once Studio reaches
-  parity; a11y pass; perf; upstream-sync checkpoint.
+All phases are merged to `exocortex/stable` and pushed to the fork origin. Each shipped
+with hermetic tests + a live FIXTURE E2E + a whole-branch review + governance (catalog +
+COLLAB + IDENTITY). The running :8787 instance is **not yet reprovisioned** (owner-gated).
 
-Phases 0–1 ship a premium manager with zero agent risk; 2–4 add the AI-native spine.
+- **Phase 0 — Shell & navigate. ✅ DONE.** Full-screen view, Chat↔Acervo toggle,
+  Graphite+light themes, `.axs-*`, unified navigator (`tree`+`micro`+`inbox`), reader.
+- **Phase 1 — Edit & download & bridge. ✅ DONE.** Elevated editor (MOD-009 write surface),
+  download (md/raw/zip), stage-to-chat. (+ Phase 1.1 session auto-bind.) *Shipped live.*
+- **Phase 2 — Intake (AI-native inbound). ✅ DONE.** 2a: capture upload/text/link → `_inbox`
+  (agentless). 2b: Hermes triage proposal + agent-mediated promote (the first semantic
+  write; hybrid = agent crafts body, server writes via the `acervoctl` control plane).
+- **Phase 3 — Publish (outbound). ✅ DONE.** `x/publish/prepare` (quality gate) +
+  `x/publish` (Draft-First → Drive SHA-256 receipt); public share owner-gated. Deterministic
+  shell-out to `artifact_publish.py` + `validate_artifact_manifest.py` (no cognition).
+- **Phase 4 — Assist & ask. ✅ DONE.** `x/assist` (rewrite/summarize/suggest-tags/
+  contradiction, proposal-only; apply via the existing editor + `x/save`) + `x/ask`
+  ("ask the acervo": bounded in-process retrieval → grounded answer, sources subset-validated).
+- **Phase 5 — Consolidate. ✅ DONE.** Retire/redirect the MOD-009 docked panel (from the
+  fork-owned `acervo-studio.js`, MOD-009 byte-untouched); a11y pass (dialog role, Escape,
+  focus management, keyboard-operable nav); perf check; upstream-sync checkpoint
+  (`docs/acervo-studio/UPSTREAM-SYNC.md`).
+
+Phases 0–1 shipped a premium manager with zero agent risk; 2–4 added the AI-native spine;
+5 consolidated. Go-live (reprovision) is the remaining owner-gated step —
+`docs/acervo-studio/GO-LIVE-CHECKLIST.md`.
 
 ---
 
