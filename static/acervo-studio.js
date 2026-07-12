@@ -763,6 +763,49 @@
   }
   window.acervoStudioTriage = acervoStudioTriage;
 
+  async function acervoStudioPromote(iid, routing) {
+    routing = routing || {};
+    // Promote writes only into a microverso (the scope guard denies global/
+    // shared/macro). Guide the user instead of failing server-side.
+    if (routing.scope !== 'micro' || !String(routing.slug || '').trim()) {
+      _toast('Promover grava num microverso: escolha escopo "micro" + um slug', 'error');
+      return;
+    }
+    if (!String(routing.title || '').trim()) { _toast('Informe um título', 'error'); return; }
+    var root = _root();
+    var pc = root && root.querySelector('[data-env-proposal]');
+    var btn = pc && pc.querySelector('[data-prop-promote]');
+    if (btn) btn.disabled = true;
+    var r;
+    try {
+      r = await api('/api/acervo/x/intake/item/promote', {
+        method: 'POST',
+        body: JSON.stringify({ session_id: _sid(), id: iid, routing: routing }),
+        timeoutMs: 120000  // an agent turn + deterministic write can take a while
+      });
+    } catch (e) {
+      if (btn) btn.disabled = false;
+      _toast('Falha ao promover' + _detail(e), 'error');
+      return;
+    }
+    if (r && r.ok) {
+      _toast('Promovido à memória' + (r.created_path ? ': ' + r.created_path : ''), 'success');
+      AXS.scope = 'inbox';
+      if (typeof acervoStudioRenderNav === 'function') await acervoStudioRenderNav();
+      if (r.created_path && typeof acervoStudioOpenPage === 'function') {
+        acervoStudioOpenPage(r.created_path);
+      }
+      return;
+    }
+    if (btn) btn.disabled = false;
+    if (r && r.offline) {
+      _toast('Agente offline — tente novamente', 'error');
+    } else {
+      _toast('Não foi possível promover' + (r && r.error ? ': ' + r.error : ''), 'error');
+    }
+  }
+  window.acervoStudioPromote = acervoStudioPromote;
+
   // ── Phase 2a: intake capture ─────────────────────────────────────────────
   function _readFileB64(file) {
     return new Promise(function (resolve, reject) {
