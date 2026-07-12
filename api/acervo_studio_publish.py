@@ -158,3 +158,96 @@ def _run_publish(tools_dir, root, artifact_dir):
     if not isinstance(receipt, dict) or receipt.get("status") != "published":
         raise PublishError("publish output unparseable: %s" % out[:300])
     return receipt
+
+
+def _drive_probe():
+    """Best-effort hint: does a google_api.py Drive driver look discoverable
+    in the runtime? The publish tool does its own authoritative discovery —
+    this only powers the UI's early "Drive não configurado" hint."""
+    home = os.path.expanduser(os.environ.get("HERMES_HOME", "") or "~/.hermes")
+    for rel in (os.path.join("skills", "productivity", "google-workspace",
+                             "scripts", "google_api.py"),
+                os.path.join("hermes-agent", "skills", "productivity",
+                             "google-workspace", "scripts", "google_api.py")):
+        if os.path.isfile(os.path.join(home, rel)):
+            return True
+    return False
+
+
+def prepare(root, art_id):
+    """Assemble the publish gate for one artifact: manifest summary + quality
+    gate + Drive target + visibility options. Read-only (the validator does
+    not mutate). Never raises for operational problems."""
+    target = _artifact_dir(root, art_id)
+    if target is None:
+        return {"ok": False, "error": "artifact not found"}
+    try:
+        manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
+        if not isinstance(manifest, dict):
+            raise ValueError("manifest is not an object")
+    except (OSError, ValueError):
+        return {"ok": False, "error": "manifest.json missing or invalid"}
+    tools_dir = _resolve_tools_dir(root)
+    if tools_dir is None:
+        return {"ok": False, "tools_missing": True}
+    try:
+        gate = _run_validator(tools_dir, root, target)
+    except PublishError as e:
+        return {"ok": False, "error": str(e)}
+    exports = manifest.get("exports") or []
+    return {
+        "ok": True,
+        "artifact": {
+            "id": str(art_id),
+            "title": str(manifest.get("title", "") or art_id),
+            "status": str(manifest.get("status", "") or "draft"),
+            "drive_target": str(((manifest.get("drive_target") or {})
+                                 .get("folder_path")) or "exocortex/inbox"),
+            "exports_count": len(exports) if isinstance(exports, list) else 0,
+        },
+        "gate": gate,
+        "can_publish": bool(gate["ok"]),
+        "visibility_options": [
+            {"value": "private", "label": "Privado (Draft-First)",
+             "enabled": True},
+            {"value": "public", "label": "Compartilhar (link público)",
+             "enabled": False, "gate": "requer aprovação explícita do owner"},
+        ],
+        "drive_probe": _drive_probe(),
+    }
+
+
+def publish(root, art_id, *, visibility="private", approve_public=False):
+    """The CONFIRMED publish (the owner clicked Publicar). Draft-First: only
+    private delivery is executable; visibility="public" is refused calmly
+    (owner-gated, and the tool has no public support). The quality gate
+    re-runs right before publishing so a stale prepare cannot slip a failing
+    artifact through."""
+    visibility = str(visibility or "private").strip().lower()
+    if visibility not in _VISIBILITIES:
+        return {"ok": False, "error": "invalid visibility"}
+    if visibility == "public":
+        if not approve_public:
+            return {"ok": False, "error": "compartilhamento público requer "
+                                          "aprovação explícita (approve_public)"}
+        return {"ok": False, "public_gated": True,
+                "message": _PUBLIC_GATE_MESSAGE}
+    target = _artifact_dir(root, art_id)
+    if target is None:
+        return {"ok": False, "error": "artifact not found"}
+    tools_dir = _resolve_tools_dir(root)
+    if tools_dir is None:
+        return {"ok": False, "tools_missing": True}
+    try:
+        gate = _run_validator(tools_dir, root, target)
+    except PublishError as e:
+        return {"ok": False, "error": str(e)}
+    if not gate["ok"]:
+        return {"ok": False, "gate_failed": True, "gate": gate}
+    try:
+        receipt = _run_publish(tools_dir, root, target)
+    except DriveNotConfigured:
+        return {"ok": False, "drive_unconfigured": True}
+    except PublishError as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True, "receipt": receipt}
