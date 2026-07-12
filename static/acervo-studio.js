@@ -1247,7 +1247,11 @@
   // escape hatch. Idempotent; safe if MOD-009 is absent.
   function _consolidateMod009() {
     try {
-      if (typeof window.acervoExplorerToggle === 'function' &&
+      // Redirect ONCE: the `!__acervoExplorerToggleLegacy` guard makes this
+      // idempotent — a second call must not re-wrap (which would overwrite the
+      // preserved original with our own wrapper and lose the escape hatch).
+      if (!window.__acervoExplorerToggleLegacy &&
+          typeof window.acervoExplorerToggle === 'function' &&
           window.acervoExplorerToggle !== acervoStudioToggle) {
         window.__acervoExplorerToggleLegacy = window.acervoExplorerToggle;
         window.acervoExplorerToggle = function () { acervoStudioToggle(); };
