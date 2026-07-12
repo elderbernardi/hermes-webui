@@ -547,3 +547,74 @@ def test_intake_detail_requires_session(acervo, jcap, monkeypatch):
     h = _Handler("/api/acervo/x/intake/item")
     studio.handle_studio_get(h, _get("/api/acervo/x/intake/item?session_id=ghost&id=int_20990101_000000_x"))
     assert jcap["status"] == 404
+
+
+# ── Phase 2b Task 1: agent mediation — propose_triage (mocked agent) ─────────
+import api.acervo_studio_agent as studio_agent
+
+
+def _mk_env(acervo, caption="a client note"):
+    return studio._write_envelope(acervo, content_type="text", caption=caption,
+                                  filename="", mime="", payload=b"cliente ACME pediu proposta",
+                                  session_id="s")
+
+
+def test_propose_triage_parses_valid_proposal(acervo, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"scope":"micro","slug":"acme","nature":"knowledge",'
+                                            '"title":"Proposta ACME","rationale":"cliente","keep_in_inbox":false}')
+    out = studio_agent.propose_triage(acervo, m["intake_id"])
+    assert out["ok"] is True
+    assert out["proposal"]["scope"] == "micro"
+    assert out["proposal"]["slug"] == "acme"
+    assert out["proposal"]["nature"] == "knowledge"
+    assert out["proposal"]["title"] == "Proposta ACME"
+
+
+def test_propose_triage_handles_fenced_json(acervo, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: 'Sure!\n```json\n{"scope":"global","nature":"knowledge",'
+                                            '"title":"Nota","keep_in_inbox":false}\n```\nDone.')
+    out = studio_agent.propose_triage(acervo, m["intake_id"])
+    assert out["ok"] is True and out["proposal"]["scope"] == "global"
+    assert out["proposal"]["slug"] == ""   # non-micro drops slug
+
+
+def test_propose_triage_offline_when_agent_unavailable(acervo, monkeypatch):
+    m = _mk_env(acervo)
+    def _boom(sp, up, **k):
+        raise studio_agent.AgentUnavailable("no runtime")
+    monkeypatch.setattr(studio_agent, "_run_agent_text", _boom)
+    out = studio_agent.propose_triage(acervo, m["intake_id"])
+    assert out == {"ok": False, "offline": True}
+
+
+def test_propose_triage_rejects_bad_scope(acervo, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"scope":"../etc","title":"x"}')
+    out = studio_agent.propose_triage(acervo, m["intake_id"])
+    assert out["ok"] is False and "error" in out
+
+
+def test_propose_triage_micro_requires_slug(acervo, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"scope":"micro","slug":"","title":"x"}')
+    out = studio_agent.propose_triage(acervo, m["intake_id"])
+    assert out["ok"] is False
+
+
+def test_propose_triage_missing_envelope(acervo, monkeypatch):
+    monkeypatch.setattr(studio_agent, "_run_agent_text", lambda sp, up, **k: "{}")
+    out = studio_agent.propose_triage(acervo, "int_20990101_000000_nope")
+    assert out["ok"] is False and out["error"] == "envelope not found"
+
+
+def test_propose_triage_unparseable(acervo, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(studio_agent, "_run_agent_text", lambda sp, up, **k: "no json here at all")
+    out = studio_agent.propose_triage(acervo, m["intake_id"])
+    assert out["ok"] is False and "error" in out
