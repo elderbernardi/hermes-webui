@@ -846,3 +846,91 @@ def test_pub_resolve_tools_dir_none_when_absent(acervo, tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "nohermes"))
     monkeypatch.setenv("EXOCORTEX_HOME", str(tmp_path / "noexo"))
     assert studio_pub._resolve_tools_dir(acervo) is None
+
+
+# ── Phase 3 Task 2: CLI runners against fake tools in the fixture ────────────
+
+def _mk_tools(acervo, *, validator_json=None, publish_json=None, publish_rc=0,
+              publish_stderr=""):
+    """Fake artifact_publish.py + validate_artifact_manifest.py inside the
+    fixture acervo. The publisher touches ran.flag so tests can assert
+    whether it was executed."""
+    tools = acervo / "global" / "tools"
+    (tools / "harness").mkdir(parents=True, exist_ok=True)
+    vj = validator_json if validator_json is not None else [
+        {"artifact": "x", "ok": True, "errors": [], "warnings": []}]
+    (tools / "harness" / "validate_artifact_manifest.py").write_text(
+        "import json, sys\n"
+        "print(json.dumps(%r))\n"
+        "sys.exit(0 if %r else 1)\n" % (vj, bool(vj[0].get("ok"))),
+        encoding="utf-8")
+    pj = publish_json if publish_json is not None else {
+        "status": "published", "folder_path": "exocortex/inbox",
+        "folder_id": "f1", "folder_link": "https://drive.example/f1",
+        "files": [{"name": "source.md", "drive_file_id": "d1",
+                   "webViewLink": "https://drive.example/d1",
+                   "sha256": "aa" * 32, "size": 12}]}
+    (tools / "artifact_publish.py").write_text(
+        "import json, os, sys\n"
+        "open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ran.flag'), 'w').close()\n"
+        "sys.stderr.write(%r)\n"
+        "print(json.dumps(%r, ensure_ascii=False))\n"
+        "sys.exit(%d)\n" % (publish_stderr, pj, publish_rc),
+        encoding="utf-8")
+    return tools
+
+
+def test_pub_run_validator_parses_ok(acervo):
+    d = _mk_artifact(acervo)
+    tools = _mk_tools(acervo)
+    gate = studio_pub._run_validator(str(tools), acervo, d)
+    assert gate == {"ok": True, "errors": [], "warnings": []}
+
+
+def test_pub_run_validator_reports_errors(acervo):
+    d = _mk_artifact(acervo)
+    tools = _mk_tools(acervo, validator_json=[
+        {"artifact": "x", "ok": False,
+         "errors": ["Missing required field: title"],
+         "warnings": ["No owner.id — artifact is orphaned"]}])
+    gate = studio_pub._run_validator(str(tools), acervo, d)
+    assert gate["ok"] is False
+    assert gate["errors"] == ["Missing required field: title"]
+    assert gate["warnings"] == ["No owner.id — artifact is orphaned"]
+
+
+def test_pub_run_validator_unparseable_raises(acervo):
+    d = _mk_artifact(acervo)
+    tools = acervo / "global" / "tools"
+    (tools / "harness").mkdir(parents=True, exist_ok=True)
+    (tools / "harness" / "validate_artifact_manifest.py").write_text(
+        "print('not json')\n", encoding="utf-8")
+    (tools / "artifact_publish.py").write_text("", encoding="utf-8")
+    with pytest.raises(studio_pub.PublishError):
+        studio_pub._run_validator(str(tools), acervo, d)
+
+
+def test_pub_run_publish_parses_receipt(acervo):
+    d = _mk_artifact(acervo)
+    tools = _mk_tools(acervo)
+    receipt = studio_pub._run_publish(str(tools), acervo, d)
+    assert receipt["status"] == "published"
+    assert receipt["files"][0]["sha256"] == "aa" * 32
+    assert (tools / "ran.flag").is_file()
+
+
+def test_pub_run_publish_drive_unconfigured(acervo):
+    d = _mk_artifact(acervo)
+    tools = _mk_tools(acervo, publish_rc=1, publish_stderr=
+                      "google_api.py não encontrado. Verifique a skill "
+                      "productivity/google-workspace no runtime Hermes.\n")
+    with pytest.raises(studio_pub.DriveNotConfigured):
+        studio_pub._run_publish(str(tools), acervo, d)
+
+
+def test_pub_run_publish_other_failure_raises(acervo):
+    d = _mk_artifact(acervo)
+    tools = _mk_tools(acervo, publish_rc=1, publish_stderr="boom: quota\n",
+                      publish_json={"status": "error"})
+    with pytest.raises(studio_pub.PublishError):
+        studio_pub._run_publish(str(tools), acervo, d)

@@ -96,3 +96,65 @@ def _resolve_tools_dir(root):
                                        "validate_artifact_manifest.py")):
             return d
     return None
+
+
+def _run_tool(args, *, root, timeout, cwd):
+    """One publish-CLI subprocess: list form, no shell, ACERVO pinned to the
+    served root so the tool never falls back to a different acervo."""
+    env = dict(os.environ)
+    env["ACERVO"] = str(root)
+    return subprocess.run(args, cwd=cwd, env=env, capture_output=True,
+                          text=True, timeout=timeout)
+
+
+def _run_validator(tools_dir, root, artifact_dir):
+    """Run validate_artifact_manifest.py --json on one artifact dir. Returns
+    {ok, errors, warnings}. Exit code 1 just means "has errors" — still a
+    valid gate result; raises PublishError only when the tool cannot run or
+    prints unparseable output."""
+    script = os.path.join(tools_dir, "harness", "validate_artifact_manifest.py")
+    try:
+        p = _run_tool([sys.executable or "python3", script,
+                       str(artifact_dir), "--json"],
+                      root=root, timeout=_VALIDATOR_TIMEOUT, cwd=tools_dir)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        raise PublishError("validator failed: %s" % e)
+    try:
+        arr = json.loads((p.stdout or "").strip() or "[]")
+    except ValueError:
+        raise PublishError("validator output unparseable: %s"
+                           % (p.stderr or p.stdout or "").strip()[:300])
+    if not isinstance(arr, list) or not arr or not isinstance(arr[0], dict):
+        raise PublishError("validator returned no result: %s"
+                           % (p.stderr or "").strip()[:300])
+    r = arr[0]
+    return {"ok": bool(r.get("ok")),
+            "errors": [str(x) for x in (r.get("errors") or [])],
+            "warnings": [str(x) for x in (r.get("warnings") or [])]}
+
+
+def _run_publish(tools_dir, root, artifact_dir):
+    """artifact_publish.py publish --artifact-dir … → parsed receipt dict.
+    Raises DriveNotConfigured when the Drive driver is missing (the tool's
+    own failure receipt receipts/receipt.google_drive.failed.json still gets
+    written by the tool), PublishError on any other failure."""
+    script = os.path.join(tools_dir, "artifact_publish.py")
+    try:
+        p = _run_tool([sys.executable or "python3", script, "publish",
+                       "--artifact-dir", str(artifact_dir)],
+                      root=root, timeout=_PUBLISH_TIMEOUT, cwd=tools_dir)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        raise PublishError("publish failed: %s" % e)
+    blob = (p.stderr or "") + "\n" + (p.stdout or "")
+    if p.returncode != 0:
+        if _DRIVE_MISSING_MARKER in blob:
+            raise DriveNotConfigured(blob.strip()[:300])
+        raise PublishError("publish rejected: %s" % blob.strip()[:300])
+    out = (p.stdout or "").strip()
+    try:
+        receipt = json.loads(out) if out else None
+    except ValueError:
+        receipt = None
+    if not isinstance(receipt, dict) or receipt.get("status") != "published":
+        raise PublishError("publish output unparseable: %s" % out[:300])
+    return receipt
