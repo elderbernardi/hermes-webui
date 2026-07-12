@@ -752,10 +752,9 @@
         method: 'POST', body: JSON.stringify({ session_id: _sid(), id: iid })
       });
     } catch (e) {
-      // api() throws on non-2xx; surface offline vs generic.
-      var off = e && (e.offline || (e.body && e.body.offline));
-      pc.innerHTML = '<div class="axs-env-note">' +
-        (off ? 'Agente offline — tente novamente.' : ('Falha na triagem' + _detail(e))) + '</div>';
+      // operational states come back as 200 {ok:false,...}; a throw here is a
+      // malformed request or network error.
+      pc.innerHTML = '<div class="axs-env-note">Falha na triagem' + _detail(e) + '</div>';
       return;
     }
     if (r && r.ok && r.proposal) _renderProposal(pc, iid, r.proposal);

@@ -638,7 +638,7 @@ def test_triage_route_happy(acervo, session_ok, jcap, monkeypatch):
     assert rj["proposal"]["scope"] == "micro"
 
 
-def test_triage_route_offline_503(acervo, session_ok, jcap, monkeypatch):
+def test_triage_route_offline(acervo, session_ok, jcap, monkeypatch):
     m = _mk_env(acervo)
     monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
     def _boom(sp, up, **k):
@@ -646,7 +646,8 @@ def test_triage_route_offline_503(acervo, session_ok, jcap, monkeypatch):
     monkeypatch.setattr(studio_agent, "_run_agent_text", _boom)
     h = _Handler("/api/acervo/x/intake/item/triage")
     studio.handle_studio_post(h, {"session_id": "sid1", "id": m["intake_id"]})
-    assert jcap["status"] == 503 and jcap["obj"]["offline"] is True
+    # operational states => 200 with ok flag (so the UI renders them calmly)
+    assert jcap["status"] == 200 and jcap["obj"]["offline"] is True and jcap["obj"]["ok"] is False
 
 
 def test_triage_route_missing_envelope_404(acervo, session_ok, jcap, monkeypatch):
@@ -667,3 +668,91 @@ def test_triage_route_requires_session(acervo, jcap, monkeypatch):
     h = _Handler("/api/acervo/x/intake/item/triage")
     studio.handle_studio_post(h, {"session_id": "ghost", "id": "int_20990101_000000_x"})
     assert jcap["status"] in (400, 404)
+
+
+# ── Phase 2b Task 3: promote route (agent crafts body, server writes via acervoctl) ──
+
+def _mock_commit_ok(monkeypatch, acervo):
+    """Mock the deterministic acervoctl write to succeed with a receipt, and
+    actually drop a page file so created_path is real-ish."""
+    def _fake(root, slug, nature, title, body_md, class_name, description):
+        rel = "micro/%s/%s/%s.md" % (slug, nature, studio._slugify(title))
+        p = acervo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(body_md, encoding="utf-8")
+        return {"status": "committed", "microverso": slug, "nature": nature,
+                "relative_output": rel, "entry_type": "CREATED"}
+    monkeypatch.setattr(studio_agent, "_commit_via_acervoctl", _fake)
+
+
+def _routing(slug="acme", nature="knowledge", title="Proposta ACME", scope="micro"):
+    return {"scope": scope, "slug": slug, "nature": nature, "title": title}
+
+
+def test_promote_happy_writes_and_moves(acervo, session_ok, jcap, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"body_markdown":"# Proposta\\n\\ncorpo","class":"volátil","description":"d"}')
+    _mock_commit_ok(monkeypatch, acervo)
+    h = _Handler("/api/acervo/x/intake/item/promote")
+    studio.handle_studio_post(h, {"session_id": "sid1", "id": m["intake_id"], "routing": _routing()})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is True
+    assert jcap["obj"]["created_path"] == "micro/acme/knowledge/proposta-acme.md"
+    assert (acervo / "micro/acme/knowledge/proposta-acme.md").is_file()
+    # envelope moved incoming -> promoted
+    assert not (acervo / "_inbox" / "incoming" / m["intake_id"]).exists()
+    assert (acervo / "_inbox" / "promoted" / m["intake_id"]).is_dir()
+
+
+def test_promote_rejects_non_micro_scope(acervo, session_ok, jcap, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    monkeypatch.setattr(studio_agent, "_run_agent_text", lambda sp, up, **k: "{}")
+    h = _Handler("/api/acervo/x/intake/item/promote")
+    studio.handle_studio_post(h, {"session_id": "sid1", "id": m["intake_id"],
+                                  "routing": _routing(scope="global")})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is False and "micro" in jcap["obj"]["error"]
+    # nothing moved
+    assert (acervo / "_inbox" / "incoming" / m["intake_id"]).is_dir()
+
+
+def test_promote_offline_keeps_envelope(acervo, session_ok, jcap, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    def _boom(sp, up, **k):
+        raise studio_agent.AgentUnavailable("no runtime")
+    monkeypatch.setattr(studio_agent, "_run_agent_text", _boom)
+    h = _Handler("/api/acervo/x/intake/item/promote")
+    studio.handle_studio_post(h, {"session_id": "sid1", "id": m["intake_id"], "routing": _routing()})
+    assert jcap["status"] == 200 and jcap["obj"]["offline"] is True
+    assert (acervo / "_inbox" / "incoming" / m["intake_id"]).is_dir()  # not moved
+
+
+def test_promote_write_rejected_keeps_envelope(acervo, session_ok, jcap, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"body_markdown":"x","class":"volátil"}')
+    def _reject(*a, **k):
+        raise studio_agent.PromoteError("write rejected: cross_microverso_write_blocked")
+    monkeypatch.setattr(studio_agent, "_commit_via_acervoctl", _reject)
+    h = _Handler("/api/acervo/x/intake/item/promote")
+    studio.handle_studio_post(h, {"session_id": "sid1", "id": m["intake_id"], "routing": _routing()})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is False and "rejected" in jcap["obj"]["error"]
+    assert (acervo / "_inbox" / "incoming" / m["intake_id"]).is_dir()  # not moved
+
+
+def test_promote_requires_routing(acervo, session_ok, jcap, monkeypatch):
+    m = _mk_env(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    h = _Handler("/api/acervo/x/intake/item/promote")
+    studio.handle_studio_post(h, {"session_id": "sid1", "id": m["intake_id"]})
+    assert jcap["status"] == 400
+
+
+def test_promote_scaffolds_microverso_meta(acervo, monkeypatch):
+    # _scaffold_microverso creates _meta/index.md + log.md when absent
+    studio_agent._scaffold_microverso(acervo, "brandnew")
+    assert (acervo / "micro" / "brandnew" / "_meta" / "index.md").read_text().startswith("# Index")
+    assert (acervo / "micro" / "brandnew" / "_meta" / "log.md").read_text().startswith("# Log")
