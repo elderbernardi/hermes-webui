@@ -1182,3 +1182,94 @@ def test_post_dispatcher_delegates_publish(acervo, session_ok, jcap):
     ax.handle_acervo_x_post(h, {"session_id": "sid1",
                                 "artifact_id": "art_20260712_relatorio"})
     assert jcap["status"] == 200 and jcap["obj"]["ok"] is True
+
+
+# ── Phase 4 Task 1: propose_assist (proposal-only cognition) ─────────────────
+
+def _mk_page(acervo, rel="global/knowledge/nota.md",
+             body="---\ntitle: Nota\nstatus: draft\n---\n\nO preço do X é 10.\n"):
+    p = acervo / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(body, encoding="utf-8")
+    return rel
+
+
+def test_assist_rewrite_proposal(acervo, monkeypatch):
+    rel = _mk_page(acervo)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"body_markdown":"# Nota\\n\\nO preço do X é 10."}')
+    out = studio_agent.propose_assist(acervo, rel, "rewrite")
+    assert out["ok"] is True and out["op"] == "rewrite"
+    assert out["proposal"]["body_markdown"].startswith("# Nota")
+
+
+def test_assist_summarize_proposal(acervo, monkeypatch):
+    rel = _mk_page(acervo)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: 'Sure:\n```json\n{"summary":"Nota sobre preço."}\n```')
+    out = studio_agent.propose_assist(acervo, rel, "summarize")
+    assert out["ok"] is True and out["proposal"]["summary"] == "Nota sobre preço."
+
+
+def test_assist_suggest_tags_cleans(acervo, monkeypatch):
+    rel = _mk_page(acervo)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"tags":["Preço!!","  X  ","preço","a b c","","z"]}')
+    out = studio_agent.propose_assist(acervo, rel, "suggest_tags")
+    assert out["ok"] is True
+    assert out["proposal"]["tags"] == ["preco", "x", "preco", "a-b-c", "z"]
+
+
+def test_assist_contradiction_findings_clamped(acervo, monkeypatch):
+    rel = _mk_page(acervo)
+    finds = ",".join(['{"claim":"c%d","conflict":"k%d"}' % (i, i) for i in range(8)])
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"consistent":false,"findings":[' + finds + ']}')
+    out = studio_agent.propose_assist(acervo, rel, "contradiction_check")
+    assert out["ok"] is True and out["proposal"]["consistent"] is False
+    assert len(out["proposal"]["findings"]) == 5   # clamped to 5
+    assert out["proposal"]["findings"][0] == {"claim": "c0", "conflict": "k0"}
+
+
+def test_assist_offline(acervo, monkeypatch):
+    rel = _mk_page(acervo)
+    def _boom(sp, up, **k):
+        raise studio_agent.AgentUnavailable("no runtime")
+    monkeypatch.setattr(studio_agent, "_run_agent_text", _boom)
+    out = studio_agent.propose_assist(acervo, rel, "rewrite")
+    assert out == {"ok": False, "offline": True}
+
+
+def test_assist_unknown_op(acervo):
+    rel = _mk_page(acervo)
+    out = studio_agent.propose_assist(acervo, rel, "translate")
+    assert out["ok"] is False and "unknown" in out["error"]
+
+
+def test_assist_non_md_rejected(acervo, monkeypatch):
+    (acervo / "global" / "knowledge").mkdir(parents=True, exist_ok=True)
+    (acervo / "global" / "knowledge" / "a.pdf").write_bytes(b"%PDF-1.4")
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: (_ for _ in ()).throw(AssertionError("read a non-md")))
+    out = studio_agent.propose_assist(acervo, "global/knowledge/a.pdf", "summarize")
+    assert out["ok"] is False and "not found or not assistable" in out["error"]
+
+
+def test_assist_quarantine_symlink_blocked(acervo, monkeypatch):
+    (acervo / ".quarantine").mkdir(exist_ok=True)
+    (acervo / ".quarantine" / "secret.md").write_text("segredo", encoding="utf-8")
+    (acervo / "global" / "knowledge").mkdir(parents=True, exist_ok=True)
+    (acervo / "global" / "knowledge" / "link.md").symlink_to(
+        acervo / ".quarantine" / "secret.md")
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: (_ for _ in ()).throw(AssertionError("read quarantine")))
+    out = studio_agent.propose_assist(acervo, "global/knowledge/link.md", "summarize")
+    assert out["ok"] is False
+
+
+def test_assist_unparseable(acervo, monkeypatch):
+    rel = _mk_page(acervo)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: "no json here")
+    out = studio_agent.propose_assist(acervo, rel, "rewrite")
+    assert out["ok"] is False and "error" in out
