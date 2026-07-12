@@ -1427,3 +1427,60 @@ def test_post_dispatcher_delegates_assist_and_ask(acervo, session_ok, jcap, monk
     h = _Handler("/api/acervo/x/assist")
     ax.handle_acervo_x_post(h, {"session_id": "sid1", "path": rel, "op": "summarize"})
     assert jcap["status"] == 200 and jcap["obj"]["ok"] is True
+
+
+# ── Phase 4 whole-branch review fixes ────────────────────────────────────────
+
+@pytest.mark.parametrize("bad_findings", ['{"a":1}', '7', '"str"', 'true'])
+def test_assist_contradiction_non_list_findings_no_crash(acervo, monkeypatch, bad_findings):
+    """review FINDING A: model returns `findings` as a non-list — must NOT 500."""
+    rel = _mk_page(acervo)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"consistent":false,"findings":' + bad_findings + '}')
+    out = studio_agent.propose_assist(acervo, rel, "contradiction_check")
+    assert out["ok"] is True
+    assert out["proposal"]["findings"] == []
+
+
+def test_assist_contradiction_route_non_list_no_500(acervo, session_ok, jcap, monkeypatch):
+    """review FINDING A at the route: no 500 leak (operational-state guarantee)."""
+    rel = _mk_page(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"consistent":false,"findings":{"claim":"x"}}')
+    h = _Handler("/api/acervo/x/assist")
+    studio.handle_studio_post(h, {"session_id": "sid1", "path": rel,
+                                  "op": "contradiction_check"})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is True
+
+
+def test_ask_context_symlink_into_quarantine_not_leaked(acervo):
+    """review FINDING B: a symlink with a clean name resolving into .quarantine
+    must NOT be read or cited by retrieval (asymmetry with assist closed)."""
+    (acervo / ".quarantine").mkdir(exist_ok=True)
+    (acervo / ".quarantine" / "secret.md").write_text(
+        "---\ntitle: Segredo\n---\n\npreço secreto tabelado confidencial.\n",
+        encoding="utf-8")
+    (acervo / "global" / "knowledge").mkdir(parents=True, exist_ok=True)
+    (acervo / "global" / "knowledge" / "link.md").symlink_to(
+        acervo / ".quarantine" / "secret.md")
+    _mk_page(acervo, "global/knowledge/real.md",
+             "---\ntitle: Preço real\n---\n\npreço tabelado normal.\n")
+    ctx = studio_agent._ask_context(acervo, "preço tabelado", k=5)
+    paths = [c["path"] for c in ctx]
+    assert "global/knowledge/real.md" in paths
+    assert not any(".quarantine" in p or "secret" in p for p in paths)
+    assert not any("secreto" in c["excerpt"] or "confidencial" in c["excerpt"] for c in ctx)
+
+
+def test_ask_context_symlinked_nature_dir_into_quarantine_not_leaked(acervo):
+    """review FINDING B: a symlinked NATURE dir resolving into .quarantine is
+    dropped too (resolved-parts guard, not just the entry name)."""
+    (acervo / ".quarantine" / "hidden").mkdir(parents=True, exist_ok=True)
+    (acervo / ".quarantine" / "hidden" / "leak.md").write_text(
+        "---\ntitle: Vazado\n---\n\npreço tabelado vazado xyz.\n", encoding="utf-8")
+    (acervo / "shared").mkdir(exist_ok=True)
+    (acervo / "shared" / "decisions").symlink_to(
+        acervo / ".quarantine" / "hidden", target_is_directory=True)
+    ctx = studio_agent._ask_context(acervo, "preço tabelado vazado", k=5)
+    assert not any("vazado" in c["excerpt"] or "leak" in c["path"] for c in ctx)

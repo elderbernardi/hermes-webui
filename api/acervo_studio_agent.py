@@ -513,7 +513,12 @@ def _normalize_assist(op, obj):
         return {"tags": tags} if tags else None
     if op == "contradiction_check":
         finds = []
-        for f in (obj.get("findings") or [])[:5]:
+        # The model output is untrusted: `findings` may arrive as a non-list
+        # (a single object, a number) — guard before slicing (mirrors ask's
+        # isinstance guard on `sources`) so a bad shape never 500s.
+        raw_finds = obj.get("findings")
+        raw_finds = raw_finds if isinstance(raw_finds, list) else []
+        for f in raw_finds[:5]:
             if isinstance(f, dict):
                 claim = str(f.get("claim", "") or "").strip()[:300]
                 conflict = str(f.get("conflict", "") or "").strip()[:300]
@@ -611,6 +616,18 @@ def _ask_context(root, question, k=5):
                 if not f.is_file() or f.suffix.lower() != ".md" \
                    or f.name.startswith(("_", ".")):
                     continue
+                # Resolve + guard BEFORE reading: a symlink whose NAME looks
+                # clean but resolves into .quarantine/ or a `_`-prefixed area
+                # (e.g. _meta) must not be read or cited. Mirrors the assist
+                # guard in _page_content_for_assist; also drops out-of-root
+                # symlinks so their bodies are never read.
+                try:
+                    parts = f.resolve().relative_to(root.resolve()).parts
+                except (OSError, ValueError):
+                    continue
+                if any(p.startswith((".", "_")) for p in parts):
+                    continue
+                rel = "/".join(parts)
                 scanned += 1
                 meta = routes._read_frontmatter_meta(
                     f, ["title", "description", "tags"])
@@ -625,10 +642,6 @@ def _ask_context(root, question, k=5):
                 for t in terms:
                     score += 3 * tl.count(t) + 2 * dl.count(t) + 2 * gl.count(t) + bl.count(t)
                 if score > 0:
-                    try:
-                        rel = str(f.resolve().relative_to(root.resolve()))
-                    except (OSError, ValueError):
-                        continue
                     scored.append((score, rel, title, _ask_excerpt(body, terms)))
     scored.sort(key=lambda x: (-x[0], x[1]))
     return [{"path": p, "title": t, "excerpt": e}
