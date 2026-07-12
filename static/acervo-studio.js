@@ -261,6 +261,7 @@
     var md = !!(p && p.editable);
     var acts = '';
     if (md) acts += '<button type="button" class="axs-act" data-axs-act="edit">✎ Editar</button>';
+    if (md) acts += '<button type="button" class="axs-act" data-axs-act="assist">✦ Assistir</button>';
     acts += '<button type="button" class="axs-act" data-axs-act="stage">⇪ Enviar ao chat</button>';
     acts += '<button type="button" class="axs-act" data-axs-act="download">⬇ Baixar</button>';
     if (md) acts += '<button type="button" class="axs-act" data-axs-act="more" ' +
@@ -273,6 +274,7 @@
       b.addEventListener('click', function () {
         var act = b.getAttribute('data-axs-act');
         if (act === 'edit') acervoStudioEdit();
+        else if (act === 'assist') { if (typeof acervoStudioAssistOpen === 'function') acervoStudioAssistOpen(); }
         else if (act === 'stage') acervoStudioStage();
         else if (act === 'download') acervoStudioDownload();
         else if (act === 'publish') { if (typeof acervoStudioPublishPrepare === 'function') acervoStudioPublishPrepare(); }
@@ -608,6 +610,7 @@
       '  <div class="axs-fm">' + chips + '</div>' +
       '  <h1 class="axs-title">' + _esc(title) + '</h1>' +
       '  <div class="axs-md">' + bodyHtml + '</div>' +
+      '  <div class="axs-ai" data-axs-ai></div>' +
       '</div>';
     _wireActs(reader);
   }
@@ -629,8 +632,14 @@
         '&q=' + encodeURIComponent(q));
     } catch (e) { reader.innerHTML = '<div class="axs-reader-empty">Erro na busca.</div>'; return; }
     var res = (d && d.results) || [];
-    if (!res.length) { reader.innerHTML = '<div class="axs-reader-empty">Nada encontrado.</div>'; return; }
-    var html = '<div class="axs-results">';
+    var askLaunch = '<div class="axs-ask-launch"><button type="button" class="axs-act axs-act-primary" data-ask-go>✦ Perguntar ao acervo</button></div>';
+    if (!res.length) {
+      reader.innerHTML = askLaunch + '<div class="axs-reader-empty">Nada encontrado na busca — experimente ✦ Perguntar ao acervo.</div>';
+      var askEmpty = reader.querySelector('[data-ask-go]');
+      if (askEmpty) askEmpty.addEventListener('click', function () { acervoStudioAsk(q); });
+      return;
+    }
+    var html = askLaunch + '<div class="axs-results">';
     res.forEach(function (r) {
       html += '<button type="button" class="axs-rescard" data-path="' + _esc(r.rel_path) + '">' +
         '<div class="rt">' + _esc(r.title) + '</div>' +
@@ -639,6 +648,8 @@
     });
     html += (d.truncated ? '<div class="axs-empty">Resultados truncados.</div>' : '') + '</div>';
     reader.innerHTML = html;
+    var askGo = reader.querySelector('[data-ask-go]');
+    if (askGo) askGo.addEventListener('click', function () { acervoStudioAsk(q); });
     reader.querySelectorAll('.axs-rescard').forEach(function (el) {
       el.addEventListener('click', function () {
         if (typeof acervoStudioOpenPage === 'function')
@@ -925,6 +936,155 @@
     _toast(msg, 'error');
   }
   window.acervoStudioPublishConfirm = acervoStudioPublishConfirm;
+
+  // ── Phase 4: assist (proposal-only) + ask-the-acervo ─────────────────────
+  var AXS_ASSIST_OPS = [
+    { op: 'rewrite', label: 'Reescrever' },
+    { op: 'summarize', label: 'Resumir' },
+    { op: 'suggest_tags', label: 'Sugerir tags' },
+    { op: 'contradiction_check', label: 'Verificar contradições' }
+  ];
+
+  function _aiBox() {
+    var root = _root();
+    return root && root.querySelector('[data-axs-ai]');
+  }
+
+  function acervoStudioAssistOpen() {
+    var box = _aiBox();
+    if (!box) return;
+    var btns = AXS_ASSIST_OPS.map(function (o) {
+      return '<button type="button" class="axs-ai-op" data-ai-op="' + o.op + '">✦ ' + _esc(o.label) + '</button>';
+    }).join('');
+    box.innerHTML = '<div class="axs-ai-bar">' + btns + '</div><div class="axs-ai-out" data-ai-out></div>';
+    box.querySelectorAll('[data-ai-op]').forEach(function (b) {
+      b.addEventListener('click', function () { acervoStudioAssist(b.getAttribute('data-ai-op')); });
+    });
+  }
+  window.acervoStudioAssistOpen = acervoStudioAssistOpen;
+
+  async function acervoStudioAssist(op) {
+    var box = _aiBox();
+    var out = box && box.querySelector('[data-ai-out]');
+    if (!out || !AXS.selectedPath) return;
+    out.innerHTML = '<div class="axs-env-note">Consultando o Hermes…</div>';
+    box.querySelectorAll('[data-ai-op]').forEach(function (b) { b.disabled = true; });
+    var r;
+    try {
+      r = await api('/api/acervo/x/assist', {
+        method: 'POST',
+        body: JSON.stringify({ session_id: _sid(), path: AXS.selectedPath, op: op }),
+        timeoutMs: 120000
+      });
+    } catch (e) {
+      out.innerHTML = '<div class="axs-env-note">' + _esc('Falha na assistência' + _detail(e)) + '</div>';
+      return;
+    } finally {
+      box.querySelectorAll('[data-ai-op]').forEach(function (b) { b.disabled = false; });
+    }
+    if (r && r.offline) { out.innerHTML = '<div class="axs-env-note">Agente offline — tente novamente.</div>'; return; }
+    if (!r || !r.ok || !r.proposal) { out.innerHTML = '<div class="axs-env-note">' + _esc((r && r.error) || 'Não foi possível gerar a proposta.') + '</div>'; return; }
+    _renderAssist(out, op, r.proposal);
+  }
+  window.acervoStudioAssist = acervoStudioAssist;
+
+  function _fillEditorBody(text) {
+    // Open the existing editor (x/save is the only write path) and prefill the
+    // body; the owner still clicks Salvar. Returns true if the editor is present.
+    if (typeof acervoStudioEdit === 'function') acervoStudioEdit();
+    var root = _root();
+    var ta = root && root.querySelector('[data-axs-ed="body"]');
+    if (!ta) return false;
+    ta.value = text;
+    AXS.dirty = true;
+    return true;
+  }
+
+  function _fillEditorTags(tags) {
+    if (typeof acervoStudioEdit === 'function') acervoStudioEdit();
+    var root = _root();
+    var inp = root && root.querySelector('[data-axs-fm="tags"]');
+    if (!inp) return false;
+    inp.value = tags.join(', ');
+    AXS.dirty = true;
+    return true;
+  }
+
+  function _renderAssist(out, op, p) {
+    if (op === 'rewrite') {
+      out.innerHTML = '<div class="axs-ai-card"><div class="axs-prop-head">Proposta de reescrita</div>' +
+        '<pre class="axs-ai-pre">' + _esc(p.body_markdown || '') + '</pre>' +
+        '<div class="axs-acts"><button type="button" class="axs-act axs-act-primary" data-ai-apply="body">Aplicar no editor</button></div>' +
+        '<div class="axs-env-note">Proposta — nada é salvo até você editar e clicar em Salvar.</div></div>';
+      out.querySelector('[data-ai-apply]').addEventListener('click', function () {
+        if (_fillEditorBody(p.body_markdown || '')) _toast('Aplicado no editor — revise e salve', 'success');
+      });
+    } else if (op === 'summarize') {
+      out.innerHTML = '<div class="axs-ai-card"><div class="axs-prop-head">Resumo</div>' +
+        '<div class="axs-ai-text">' + _esc(p.summary || '') + '</div>' +
+        '<div class="axs-env-note">Proposta somente-leitura.</div></div>';
+    } else if (op === 'suggest_tags') {
+      var chips = (p.tags || []).map(function (t) { return _chip('#' + t); }).join(' ');
+      out.innerHTML = '<div class="axs-ai-card"><div class="axs-prop-head">Tags sugeridas</div>' +
+        '<div class="axs-ai-tags">' + chips + '</div>' +
+        '<div class="axs-acts"><button type="button" class="axs-act axs-act-primary" data-ai-apply="tags">Aplicar no editor</button></div></div>';
+      out.querySelector('[data-ai-apply]').addEventListener('click', function () {
+        if (_fillEditorTags(p.tags || [])) _toast('Tags aplicadas no editor — revise e salve', 'success');
+      });
+    } else if (op === 'contradiction_check') {
+      if (p.consistent || !(p.findings || []).length) {
+        out.innerHTML = '<div class="axs-ai-card"><div class="axs-prop-head">✓ Sem contradições encontradas</div></div>';
+      } else {
+        var items = p.findings.map(function (f) {
+          return '<li><b>' + _esc(f.claim) + '</b>' + (f.conflict ? ' ⇄ ' + _esc(f.conflict) : '') + '</li>';
+        }).join('');
+        out.innerHTML = '<div class="axs-ai-card"><div class="axs-prop-head">Possíveis contradições</div>' +
+          '<ul class="axs-ai-finds">' + items + '</ul>' +
+          '<div class="axs-env-note">Proposta — revise você mesmo antes de editar.</div></div>';
+      }
+    }
+  }
+
+  async function acervoStudioAsk(q) {
+    var root = _root();
+    if (!root) return;
+    q = (q || '').trim();
+    if (!q) return;
+    var reader = root.querySelector('[data-axs="reader"]');
+    var host = reader.querySelector('[data-axs-ask]');
+    if (!host) {
+      host = document.createElement('div');
+      host.setAttribute('data-axs-ask', '');
+      reader.insertBefore(host, reader.firstChild);
+    }
+    host.innerHTML = '<div class="axs-env-note">Perguntando ao acervo…</div>';
+    var r;
+    try {
+      r = await api('/api/acervo/x/ask', {
+        method: 'POST', body: JSON.stringify({ session_id: _sid(), question: q }),
+        timeoutMs: 120000
+      });
+    } catch (e) {
+      host.innerHTML = '<div class="axs-env-note">' + _esc('Falha ao perguntar' + _detail(e)) + '</div>';
+      return;
+    }
+    if (r && r.offline) { host.innerHTML = '<div class="axs-env-note">Agente offline — tente novamente.</div>'; return; }
+    if (r && r.no_context) { host.innerHTML = '<div class="axs-env-note">Nada relevante encontrado no acervo.</div>'; return; }
+    if (!r || !r.ok) { host.innerHTML = '<div class="axs-env-note">' + _esc((r && r.error) || 'Não foi possível responder.') + '</div>'; return; }
+    var srcs = (r.sources || []).map(function (s) {
+      return '<button type="button" class="axs-ask-src" data-ask-src="' + _esc(s) + '">' + _esc(s) + '</button>';
+    }).join(' ');
+    host.innerHTML = '<div class="axs-ai-card axs-ask-card"><div class="axs-prop-head">✦ Resposta do acervo</div>' +
+      '<div class="axs-ai-text">' + _esc(r.answer || '') + '</div>' +
+      (srcs ? '<div class="axs-ask-srcs">Fontes: ' + srcs + '</div>' : '') +
+      '<div class="axs-env-note">Resposta ancorada nas fontes citadas — verifique antes de agir.</div></div>';
+    host.querySelectorAll('[data-ask-src]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (typeof acervoStudioOpenPage === 'function') acervoStudioOpenPage(b.getAttribute('data-ask-src'));
+      });
+    });
+  }
+  window.acervoStudioAsk = acervoStudioAsk;
 
   // ── Phase 2a: intake capture ─────────────────────────────────────────────
   function _readFileB64(file) {

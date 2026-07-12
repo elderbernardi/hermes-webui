@@ -1182,3 +1182,305 @@ def test_post_dispatcher_delegates_publish(acervo, session_ok, jcap):
     ax.handle_acervo_x_post(h, {"session_id": "sid1",
                                 "artifact_id": "art_20260712_relatorio"})
     assert jcap["status"] == 200 and jcap["obj"]["ok"] is True
+
+
+# ── Phase 4 Task 1: propose_assist (proposal-only cognition) ─────────────────
+
+def _mk_page(acervo, rel="global/knowledge/nota.md",
+             body="---\ntitle: Nota\nstatus: draft\n---\n\nO preço do X é 10.\n"):
+    p = acervo / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(body, encoding="utf-8")
+    return rel
+
+
+def test_assist_rewrite_proposal(acervo, monkeypatch):
+    rel = _mk_page(acervo)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"body_markdown":"# Nota\\n\\nO preço do X é 10."}')
+    out = studio_agent.propose_assist(acervo, rel, "rewrite")
+    assert out["ok"] is True and out["op"] == "rewrite"
+    assert out["proposal"]["body_markdown"].startswith("# Nota")
+
+
+def test_assist_summarize_proposal(acervo, monkeypatch):
+    rel = _mk_page(acervo)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: 'Sure:\n```json\n{"summary":"Nota sobre preço."}\n```')
+    out = studio_agent.propose_assist(acervo, rel, "summarize")
+    assert out["ok"] is True and out["proposal"]["summary"] == "Nota sobre preço."
+
+
+def test_assist_suggest_tags_cleans(acervo, monkeypatch):
+    rel = _mk_page(acervo)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"tags":["Preço!!","  X  ","preço","a b c","","z"]}')
+    out = studio_agent.propose_assist(acervo, rel, "suggest_tags")
+    assert out["ok"] is True
+    assert out["proposal"]["tags"] == ["preco", "x", "preco", "a-b-c", "z"]
+
+
+def test_assist_contradiction_findings_clamped(acervo, monkeypatch):
+    rel = _mk_page(acervo)
+    finds = ",".join(['{"claim":"c%d","conflict":"k%d"}' % (i, i) for i in range(8)])
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"consistent":false,"findings":[' + finds + ']}')
+    out = studio_agent.propose_assist(acervo, rel, "contradiction_check")
+    assert out["ok"] is True and out["proposal"]["consistent"] is False
+    assert len(out["proposal"]["findings"]) == 5   # clamped to 5
+    assert out["proposal"]["findings"][0] == {"claim": "c0", "conflict": "k0"}
+
+
+def test_assist_offline(acervo, monkeypatch):
+    rel = _mk_page(acervo)
+    def _boom(sp, up, **k):
+        raise studio_agent.AgentUnavailable("no runtime")
+    monkeypatch.setattr(studio_agent, "_run_agent_text", _boom)
+    out = studio_agent.propose_assist(acervo, rel, "rewrite")
+    assert out == {"ok": False, "offline": True}
+
+
+def test_assist_unknown_op(acervo):
+    rel = _mk_page(acervo)
+    out = studio_agent.propose_assist(acervo, rel, "translate")
+    assert out["ok"] is False and "unknown" in out["error"]
+
+
+def test_assist_non_md_rejected(acervo, monkeypatch):
+    (acervo / "global" / "knowledge").mkdir(parents=True, exist_ok=True)
+    (acervo / "global" / "knowledge" / "a.pdf").write_bytes(b"%PDF-1.4")
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: (_ for _ in ()).throw(AssertionError("read a non-md")))
+    out = studio_agent.propose_assist(acervo, "global/knowledge/a.pdf", "summarize")
+    assert out["ok"] is False and "not found or not assistable" in out["error"]
+
+
+def test_assist_quarantine_symlink_blocked(acervo, monkeypatch):
+    (acervo / ".quarantine").mkdir(exist_ok=True)
+    (acervo / ".quarantine" / "secret.md").write_text("segredo", encoding="utf-8")
+    (acervo / "global" / "knowledge").mkdir(parents=True, exist_ok=True)
+    (acervo / "global" / "knowledge" / "link.md").symlink_to(
+        acervo / ".quarantine" / "secret.md")
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: (_ for _ in ()).throw(AssertionError("read quarantine")))
+    out = studio_agent.propose_assist(acervo, "global/knowledge/link.md", "summarize")
+    assert out["ok"] is False
+
+
+def test_assist_unparseable(acervo, monkeypatch):
+    rel = _mk_page(acervo)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: "no json here")
+    out = studio_agent.propose_assist(acervo, rel, "rewrite")
+    assert out["ok"] is False and "error" in out
+
+
+# ── Phase 4 Task 2: ask-the-acervo (retrieval-grounded) ──────────────────────
+
+def test_ask_context_scores_and_returns_hit(acervo):
+    _mk_page(acervo, "global/knowledge/preco.md",
+             "---\ntitle: Tabela de preço\ntags: [preco]\n---\n\nO preço do produto X é R$ 10.\n")
+    _mk_page(acervo, "global/knowledge/outro.md",
+             "---\ntitle: Reunião\n---\n\nAta da reunião de segunda.\n")
+    ctx = studio_agent._ask_context(acervo, "qual o preço do produto X?", k=3)
+    assert ctx and ctx[0]["path"] == "global/knowledge/preco.md"
+    assert "excerpt" in ctx[0] and ctx[0]["excerpt"]
+
+
+def test_ask_context_skips_meta_and_dot(acervo):
+    _mk_page(acervo, "micro/demo/_meta/index.md",
+             "---\ntitle: Index\n---\n\npreço preço preço\n")
+    _mk_page(acervo, "micro/demo/knowledge/p.md",
+             "---\ntitle: Preço demo\n---\n\nO preço é 5.\n")
+    ctx = studio_agent._ask_context(acervo, "preço", k=5)
+    paths = [c["path"] for c in ctx]
+    assert "micro/demo/knowledge/p.md" in paths
+    assert not any("/_meta/" in p for p in paths)
+
+
+def test_ask_context_k_cap(acervo):
+    for i in range(6):
+        _mk_page(acervo, "global/knowledge/p%d.md" % i,
+                 "---\ntitle: Preço %d\n---\n\npreço tabelado item.\n" % i)
+    ctx = studio_agent._ask_context(acervo, "preço tabelado", k=3)
+    assert len(ctx) == 3
+
+
+def test_ask_acervo_happy_subset_sources(acervo, monkeypatch):
+    _mk_page(acervo, "global/knowledge/preco.md",
+             "---\ntitle: Preço\n---\n\nO preço do X é 10.\n")
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"answer":"O preço do X é 10.",'
+                                            '"sources":["global/knowledge/preco.md","micro/fake/x.md"]}')
+    out = studio_agent.ask_acervo(acervo, "qual o preço do X?")
+    assert out["ok"] is True and "10" in out["answer"]
+    # a source not in the retrieved context is dropped (grounding)
+    assert out["sources"] == ["global/knowledge/preco.md"]
+
+
+def test_ask_acervo_no_context(acervo, monkeypatch):
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: (_ for _ in ()).throw(AssertionError("agent called with no context")))
+    out = studio_agent.ask_acervo(acervo, "algo que não existe zzz")
+    assert out["ok"] is False and out["no_context"] is True
+
+
+def test_ask_acervo_offline(acervo, monkeypatch):
+    _mk_page(acervo, "global/knowledge/preco.md",
+             "---\ntitle: Preço\n---\n\nO preço do X é 10.\n")
+    def _boom(sp, up, **k):
+        raise studio_agent.AgentUnavailable("no runtime")
+    monkeypatch.setattr(studio_agent, "_run_agent_text", _boom)
+    out = studio_agent.ask_acervo(acervo, "qual o preço do X?")
+    assert out == {"ok": False, "offline": True}
+
+
+def test_ask_acervo_empty_question(acervo):
+    out = studio_agent.ask_acervo(acervo, "   ")
+    assert out["ok"] is False and "error" in out
+
+
+# ── Phase 4 Task 3: assist + ask routes ──────────────────────────────────────
+
+def test_assist_route_happy(acervo, session_ok, jcap, monkeypatch):
+    rel = _mk_page(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"summary":"resumo curto."}')
+    h = _Handler("/api/acervo/x/assist")
+    studio.handle_studio_post(h, {"session_id": "sid1", "path": rel, "op": "summarize"})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is True
+    assert jcap["obj"]["proposal"]["summary"] == "resumo curto."
+
+
+def test_assist_route_unknown_op_400(acervo, session_ok, jcap):
+    rel = _mk_page(acervo)
+    h = _Handler("/api/acervo/x/assist")
+    studio.handle_studio_post(h, {"session_id": "sid1", "path": rel, "op": "translate"})
+    assert jcap["status"] == 400
+
+
+def test_assist_route_offline_calm(acervo, session_ok, jcap, monkeypatch):
+    rel = _mk_page(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    def _boom(sp, up, **k):
+        raise studio_agent.AgentUnavailable("x")
+    monkeypatch.setattr(studio_agent, "_run_agent_text", _boom)
+    h = _Handler("/api/acervo/x/assist")
+    studio.handle_studio_post(h, {"session_id": "sid1", "path": rel, "op": "rewrite"})
+    assert jcap["status"] == 200 and jcap["obj"]["offline"] is True
+
+
+def test_assist_route_missing_page(acervo, session_ok, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    monkeypatch.setattr(studio_agent, "_run_agent_text", lambda sp, up, **k: "{}")
+    h = _Handler("/api/acervo/x/assist")
+    studio.handle_studio_post(h, {"session_id": "sid1",
+                                  "path": "global/knowledge/nope.md", "op": "rewrite"})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is False
+
+
+def test_assist_route_requires_session(acervo, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "_resolve_session_workspace", lambda sid: None)
+    h = _Handler("/api/acervo/x/assist")
+    studio.handle_studio_post(h, {"session_id": "ghost", "path": "x.md", "op": "rewrite"})
+    assert jcap["status"] in (400, 404)
+
+
+def test_ask_route_happy(acervo, session_ok, jcap, monkeypatch):
+    _mk_page(acervo, "global/knowledge/preco.md",
+             "---\ntitle: Preço\n---\n\nO preço do X é 10.\n")
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"answer":"É 10.","sources":["global/knowledge/preco.md"]}')
+    h = _Handler("/api/acervo/x/ask")
+    studio.handle_studio_post(h, {"session_id": "sid1", "question": "preço do X?"})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is True
+    assert jcap["obj"]["sources"] == ["global/knowledge/preco.md"]
+
+
+def test_ask_route_no_context_calm(acervo, session_ok, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    h = _Handler("/api/acervo/x/ask")
+    studio.handle_studio_post(h, {"session_id": "sid1", "question": "zzz inexistente"})
+    assert jcap["status"] == 200 and jcap["obj"]["no_context"] is True
+
+
+def test_ask_route_empty_question_400(acervo, session_ok, jcap):
+    h = _Handler("/api/acervo/x/ask")
+    studio.handle_studio_post(h, {"session_id": "sid1", "question": "  "})
+    assert jcap["status"] == 400
+
+
+def test_ask_route_requires_session(acervo, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "_resolve_session_workspace", lambda sid: None)
+    h = _Handler("/api/acervo/x/ask")
+    studio.handle_studio_post(h, {"session_id": "ghost", "question": "x"})
+    assert jcap["status"] in (400, 404)
+
+
+def test_post_dispatcher_delegates_assist_and_ask(acervo, session_ok, jcap, monkeypatch):
+    rel = _mk_page(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"summary":"s."}')
+    h = _Handler("/api/acervo/x/assist")
+    ax.handle_acervo_x_post(h, {"session_id": "sid1", "path": rel, "op": "summarize"})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is True
+
+
+# ── Phase 4 whole-branch review fixes ────────────────────────────────────────
+
+@pytest.mark.parametrize("bad_findings", ['{"a":1}', '7', '"str"', 'true'])
+def test_assist_contradiction_non_list_findings_no_crash(acervo, monkeypatch, bad_findings):
+    """review FINDING A: model returns `findings` as a non-list — must NOT 500."""
+    rel = _mk_page(acervo)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"consistent":false,"findings":' + bad_findings + '}')
+    out = studio_agent.propose_assist(acervo, rel, "contradiction_check")
+    assert out["ok"] is True
+    assert out["proposal"]["findings"] == []
+
+
+def test_assist_contradiction_route_non_list_no_500(acervo, session_ok, jcap, monkeypatch):
+    """review FINDING A at the route: no 500 leak (operational-state guarantee)."""
+    rel = _mk_page(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"consistent":false,"findings":{"claim":"x"}}')
+    h = _Handler("/api/acervo/x/assist")
+    studio.handle_studio_post(h, {"session_id": "sid1", "path": rel,
+                                  "op": "contradiction_check"})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is True
+
+
+def test_ask_context_symlink_into_quarantine_not_leaked(acervo):
+    """review FINDING B: a symlink with a clean name resolving into .quarantine
+    must NOT be read or cited by retrieval (asymmetry with assist closed)."""
+    (acervo / ".quarantine").mkdir(exist_ok=True)
+    (acervo / ".quarantine" / "secret.md").write_text(
+        "---\ntitle: Segredo\n---\n\npreço secreto tabelado confidencial.\n",
+        encoding="utf-8")
+    (acervo / "global" / "knowledge").mkdir(parents=True, exist_ok=True)
+    (acervo / "global" / "knowledge" / "link.md").symlink_to(
+        acervo / ".quarantine" / "secret.md")
+    _mk_page(acervo, "global/knowledge/real.md",
+             "---\ntitle: Preço real\n---\n\npreço tabelado normal.\n")
+    ctx = studio_agent._ask_context(acervo, "preço tabelado", k=5)
+    paths = [c["path"] for c in ctx]
+    assert "global/knowledge/real.md" in paths
+    assert not any(".quarantine" in p or "secret" in p for p in paths)
+    assert not any("secreto" in c["excerpt"] or "confidencial" in c["excerpt"] for c in ctx)
+
+
+def test_ask_context_symlinked_nature_dir_into_quarantine_not_leaked(acervo):
+    """review FINDING B: a symlinked NATURE dir resolving into .quarantine is
+    dropped too (resolved-parts guard, not just the entry name)."""
+    (acervo / ".quarantine" / "hidden").mkdir(parents=True, exist_ok=True)
+    (acervo / ".quarantine" / "hidden" / "leak.md").write_text(
+        "---\ntitle: Vazado\n---\n\npreço tabelado vazado xyz.\n", encoding="utf-8")
+    (acervo / "shared").mkdir(exist_ok=True)
+    (acervo / "shared" / "decisions").symlink_to(
+        acervo / ".quarantine" / "hidden", target_is_directory=True)
+    ctx = studio_agent._ask_context(acervo, "preço tabelado vazado", k=5)
+    assert not any("vazado" in c["excerpt"] or "leak" in c["path"] for c in ctx)

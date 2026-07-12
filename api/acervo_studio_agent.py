@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 import uuid
 
 logger = logging.getLogger("acervo_studio_agent")
@@ -432,3 +433,244 @@ def promote(root, iid, routing, *, session=None):
     return {"ok": True,
             "created_path": receipt.get("relative_output") or receipt.get("target_path"),
             "receipt": receipt}
+
+
+# ── Phase 4: assist (proposal-only cognition) + ask-the-acervo ───────────────
+
+_ASSIST_OPS = ("rewrite", "summarize", "suggest_tags", "contradiction_check")
+_ASSIST_CONTENT_CHARS = 12000
+
+_ASSIST_SYSTEMS = {
+    "rewrite": (
+        "You are the Exocortex acervo editor. Rewrite the page body for clarity "
+        "and directness, preserving ALL facts and the original language. No YAML "
+        "frontmatter. Reply with ONE JSON object and nothing else: "
+        "{\"body_markdown\": \"...\"}."),
+    "summarize": (
+        "You are the Exocortex acervo summarizer. Summarize the page in its own "
+        "language, 3-5 sentences, facts only. Reply with ONE JSON object and "
+        "nothing else: {\"summary\": \"...\"}."),
+    "suggest_tags": (
+        "You are the Exocortex acervo tagger. Suggest up to 8 lowercase keyword "
+        "tags for the page. Reply with ONE JSON object and nothing else: "
+        "{\"tags\": [\"...\"]}."),
+    "contradiction_check": (
+        "You are the Exocortex acervo consistency checker. Find internal "
+        "contradictions in the page (claims that conflict with each other). "
+        "Reply with ONE JSON object and nothing else: {\"consistent\": true|false, "
+        "\"findings\": [{\"claim\": \"...\", \"conflict\": \"...\"}]}."),
+}
+
+
+def _page_content_for_assist(root, rel_path):
+    """Safe bounded read of an .md page for cognition. Returns text or None
+    (bad path / not md / unreadable / resolves into a dot-prefixed area, which
+    keeps .quarantine unreachable — the x/download posture)."""
+    from api.acervo_explorer import _safe_acervo_path
+    rel = str(rel_path or "").strip()
+    if not rel.lower().endswith(".md"):
+        return None
+    try:
+        fp = _safe_acervo_path(rel)
+    except ValueError:
+        return None
+    try:
+        parts = fp.resolve().relative_to(root.resolve()).parts
+    except (OSError, ValueError):
+        return None
+    if any(p.startswith(".") for p in parts):
+        return None
+    if not fp.is_file():
+        return None
+    try:
+        return fp.read_text(encoding="utf-8", errors="replace")[:_ASSIST_CONTENT_CHARS]
+    except OSError:
+        return None
+
+
+def _clean_tags(raw):
+    # NFKD-fold accents first (ç→c, ã→a) so a Portuguese tag becomes "preco",
+    # not "pre-o" — mirrors acervo_studio._slugify's normalization.
+    def _one(t):
+        s = unicodedata.normalize("NFKD", str(t)).encode("ascii", "ignore").decode("ascii")
+        return re.sub(r"[^a-z0-9-]+", "-", s.strip().lower()).strip("-")
+    tags = [_one(t) for t in (raw if isinstance(raw, list) else [])][:8]
+    return [t for t in tags if t]
+
+
+def _normalize_assist(op, obj):
+    """Clamp the model's JSON into the per-op proposal shape; None if unusable."""
+    if not isinstance(obj, dict):
+        return None
+    if op == "rewrite":
+        body = str(obj.get("body_markdown", "") or "").strip()
+        return {"body_markdown": body} if body else None
+    if op == "summarize":
+        s = str(obj.get("summary", "") or "").strip()
+        return {"summary": s[:2000]} if s else None
+    if op == "suggest_tags":
+        tags = _clean_tags(obj.get("tags"))
+        return {"tags": tags} if tags else None
+    if op == "contradiction_check":
+        finds = []
+        # The model output is untrusted: `findings` may arrive as a non-list
+        # (a single object, a number) — guard before slicing (mirrors ask's
+        # isinstance guard on `sources`) so a bad shape never 500s.
+        raw_finds = obj.get("findings")
+        raw_finds = raw_finds if isinstance(raw_finds, list) else []
+        for f in raw_finds[:5]:
+            if isinstance(f, dict):
+                claim = str(f.get("claim", "") or "").strip()[:300]
+                conflict = str(f.get("conflict", "") or "").strip()[:300]
+                if claim:
+                    finds.append({"claim": claim, "conflict": conflict})
+        return {"consistent": bool(obj.get("consistent", not finds)),
+                "findings": finds}
+    return None
+
+
+def propose_assist(root, rel_path, op, *, session=None):
+    """PROPOSAL-ONLY cognition on one existing page. Never writes. Returns
+    {ok, op, proposal} | {ok:False, offline} | {ok:False, error}."""
+    op = str(op or "").strip().lower()
+    if op not in _ASSIST_OPS:
+        return {"ok": False, "error": "unknown assist op"}
+    content = _page_content_for_assist(root, rel_path)
+    if content is None:
+        return {"ok": False, "error": "page not found or not assistable"}
+    user_prompt = "Page path: %s\n\n---\n%s\n---\n" % (rel_path, content)
+    try:
+        text = _run_agent_text(_ASSIST_SYSTEMS[op], user_prompt, session=session)
+    except AgentUnavailable:
+        return {"ok": False, "offline": True}
+    proposal = _normalize_assist(op, _extract_json(text))
+    if proposal is None:
+        return {"ok": False, "error": "could not parse a valid proposal"}
+    return {"ok": True, "op": op, "proposal": proposal}
+
+
+_ASK_SYSTEM = (
+    "You are the Exocortex acervo answerer. Answer the question USING ONLY the "
+    "provided acervo excerpts, in the question's language, concisely. If the "
+    "excerpts do not contain the answer, say you don't know. Reply with ONE JSON "
+    "object and nothing else: {\"answer\": \"...\", \"sources\": [\"<path>\"]} where "
+    "sources lists only the excerpt paths you actually used.")
+
+_ASK_SCAN_MAX = 2000
+_ASK_BODY_CHARS = 4000
+_ASK_EXCERPT_PAD = 160
+_ASK_STOPWORDS = {"o", "a", "os", "as", "de", "do", "da", "e", "que", "qual",
+                  "the", "of", "is", "to", "in", "an"}
+
+
+def _ask_terms(question):
+    return [t for t in re.findall(r"[a-z0-9]+", str(question or "").lower())
+            if len(t) > 1 and t not in _ASK_STOPWORDS]
+
+
+def _ask_excerpt(body, terms):
+    low = body.lower()
+    for t in terms:
+        i = low.find(t)
+        if i >= 0:
+            a = max(0, i - _ASK_EXCERPT_PAD)
+            b = min(len(body), i + _ASK_EXCERPT_PAD)
+            return ("…" if a > 0 else "") + body[a:b].strip() + ("…" if b < len(body) else "")
+    return body[:_ASK_EXCERPT_PAD].strip()
+
+
+def _ask_context(root, question, k=5):
+    """Bounded in-process retrieval over global/shared/micro × the 11 natures.
+    Scores term overlap (title×3, tags×2, description×2, body×1); returns the
+    top-k {path, title, excerpt}. Skips `_`/`.`-prefixed dirs (so `_meta`,
+    `.quarantine` never contribute)."""
+    import api.routes as routes
+    terms = _ask_terms(question)
+    if not terms:
+        return []
+    bases = [root / "global", root / "shared"]
+    micro = root / "micro"
+    if micro.is_dir():
+        try:
+            for d in sorted(micro.iterdir(), key=lambda p: p.name):
+                if d.is_dir() and not d.name.startswith(("_", ".")):
+                    bases.append(d)
+        except OSError:
+            pass
+    scored = []
+    scanned = 0
+    for base in bases:
+        if not base.is_dir():
+            continue
+        for nat in routes._ACERVO_NATURES:
+            nd = base / nat
+            if not nd.is_dir():
+                continue
+            try:
+                entries = sorted(nd.iterdir(), key=lambda p: p.name)
+            except OSError:
+                continue
+            for f in entries:
+                if scanned >= _ASK_SCAN_MAX:
+                    break
+                if not f.is_file() or f.suffix.lower() != ".md" \
+                   or f.name.startswith(("_", ".")):
+                    continue
+                # Resolve + guard BEFORE reading: a symlink whose NAME looks
+                # clean but resolves into .quarantine/ or a `_`-prefixed area
+                # (e.g. _meta) must not be read or cited. Mirrors the assist
+                # guard in _page_content_for_assist; also drops out-of-root
+                # symlinks so their bodies are never read.
+                try:
+                    parts = f.resolve().relative_to(root.resolve()).parts
+                except (OSError, ValueError):
+                    continue
+                if any(p.startswith((".", "_")) for p in parts):
+                    continue
+                rel = "/".join(parts)
+                scanned += 1
+                meta = routes._read_frontmatter_meta(
+                    f, ["title", "description", "tags"])
+                title = meta.get("title", f.stem)
+                try:
+                    body = f.read_text(encoding="utf-8", errors="replace")[:_ASK_BODY_CHARS]
+                except OSError:
+                    continue
+                tl, dl, gl, bl = (title.lower(), meta.get("description", "").lower(),
+                                  meta.get("tags", "").lower(), body.lower())
+                score = 0
+                for t in terms:
+                    score += 3 * tl.count(t) + 2 * dl.count(t) + 2 * gl.count(t) + bl.count(t)
+                if score > 0:
+                    scored.append((score, rel, title, _ask_excerpt(body, terms)))
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    return [{"path": p, "title": t, "excerpt": e}
+            for (_s, p, t, e) in scored[:max(1, int(k))]]
+
+
+def ask_acervo(root, question, *, session=None):
+    """Semantic Q&A over the acervo: retrieve bounded context, ask Hermes to
+    answer USING ONLY that context, validate the cited sources are a subset of
+    the retrieved paths. PROPOSAL-ONLY (never writes). Returns
+    {ok, answer, sources} | {ok:False, no_context} | offline | error."""
+    q = str(question or "").strip()
+    if not q:
+        return {"ok": False, "error": "question is required"}
+    ctx = _ask_context(root, q, k=5)
+    if not ctx:
+        return {"ok": False, "no_context": True}
+    allowed = {c["path"] for c in ctx}
+    blocks = "\n\n".join("[%s] %s\n%s" % (c["path"], c["title"], c["excerpt"])
+                         for c in ctx)
+    user_prompt = "Question: %s\n\nAcervo excerpts:\n%s\n" % (q, blocks)
+    try:
+        text = _run_agent_text(_ASK_SYSTEM, user_prompt, session=session)
+    except AgentUnavailable:
+        return {"ok": False, "offline": True}
+    obj = _extract_json(text) or {}
+    answer = str(obj.get("answer", "") or "").strip()
+    if not answer:
+        return {"ok": False, "error": "could not parse an answer"}
+    raw_sources = obj.get("sources") if isinstance(obj.get("sources"), list) else []
+    sources = [str(s) for s in raw_sources if str(s) in allowed]
+    return {"ok": True, "answer": answer[:4000], "sources": sources}

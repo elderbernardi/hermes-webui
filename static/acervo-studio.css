@@ -142,3 +142,26 @@
 .axs-pub-files { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; }
 .axs-pub-sha { font: 400 10.5px/1 var(--axs-mono); color: var(--axs-mut); }
 .axs-pub-done { border-color: var(--axs-accbd); }
+
+/* Phase 4: assist + ask */
+.axs-ai:empty { display: none; }
+.axs-ai-bar { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.axs-ai-op { padding: 5px 11px; border-radius: 7px; border: 1px solid var(--axs-bd2);
+  background: var(--axs-surf); color: var(--axs-ink); cursor: pointer;
+  font: 500 12px/1 var(--axs-sans); }
+.axs-ai-op:hover { border-color: var(--axs-acc); color: var(--axs-strong); }
+.axs-ai-op:disabled { opacity: .5; cursor: default; }
+.axs-ai-card { margin-top: 12px; padding: 12px; border: 1px solid var(--axs-bd2);
+  border-radius: 8px; background: var(--axs-surf2); }
+.axs-ai-pre { white-space: pre-wrap; font-family: var(--axs-mono); font-size: 12px;
+  line-height: 1.5; max-height: 40vh; overflow: auto; margin: 8px 0; }
+.axs-ai-text { font-size: 13.5px; line-height: 1.6; margin: 6px 0; }
+.axs-ai-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.axs-ai-tags span { font: 600 10px/1 var(--axs-sans); border-radius: 6px; padding: 5px 8px;
+  background: var(--axs-surf); color: var(--axs-mut); border: 1px solid var(--axs-bd2); }
+.axs-ai-finds { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.6; }
+.axs-ask-launch { margin-bottom: 12px; }
+.axs-ask-card { background: var(--axs-accbg); border-color: var(--axs-accbd); }
+.axs-ask-srcs { margin-top: 8px; font-size: 12px; }
+.axs-ask-src { background: none; border: none; color: var(--axs-acct); cursor: pointer;
+  text-decoration: underline; font: 400 12px/1.4 var(--axs-mono); padding: 0 2px; }
