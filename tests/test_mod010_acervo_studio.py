@@ -782,3 +782,403 @@ def test_promote_requires_session(acervo, jcap, monkeypatch):
     studio.handle_studio_post(h, {"session_id": "ghost", "id": "int_20990101_000000_x",
                                   "routing": _routing()})
     assert jcap["status"] in (400, 404)
+
+
+# ── Phase 3 Task 1: publish module — safety + tools resolution ──────────────
+
+import api.acervo_studio_publish as studio_pub
+
+
+def _mk_artifact(acervo, art_id="art_20260712_relatorio", status="draft",
+                 title="Relatório"):
+    d = acervo / "_artifacts" / "items" / art_id
+    (d / "source").mkdir(parents=True)
+    (d / "exports").mkdir()
+    (d / "source" / "source.md").write_text("# rel\n\nconteudo\n", encoding="utf-8")
+    (d / "manifest.json").write_text(json.dumps({
+        "artifact_id": art_id, "title": title, "status": status,
+        "artifact_type": "document", "source_type": "markdown",
+        "source_path": "source/source.md",
+        "provenance": {"created_at": "2026-07-12T00:00:00Z"},
+        "drive_target": {"provider": "google_drive",
+                         "folder_path": "exocortex/inbox",
+                         "visibility": "private"},
+    }, ensure_ascii=False), encoding="utf-8")
+    return d
+
+
+@pytest.mark.parametrize("bad", ["", "../evil", "a/b", "a\\b", ".hidden", "x" * 129])
+def test_pub_valid_artifact_id_rejects(bad):
+    assert studio_pub._valid_artifact_id(bad) is False
+
+
+def test_pub_valid_artifact_id_accepts():
+    assert studio_pub._valid_artifact_id("art_20260712_relatorio") is True
+
+
+def test_pub_artifact_dir_resolves(acervo):
+    d = _mk_artifact(acervo)
+    assert studio_pub._artifact_dir(acervo, "art_20260712_relatorio") == d
+
+
+def test_pub_artifact_dir_missing_none(acervo):
+    assert studio_pub._artifact_dir(acervo, "art_20990101_nope") is None
+
+
+def test_pub_artifact_dir_blocks_symlink_into_quarantine(acervo):
+    (acervo / ".quarantine" / "evil").mkdir(parents=True)
+    (acervo / "_artifacts" / "items").mkdir(parents=True, exist_ok=True)
+    (acervo / "_artifacts" / "items" / "linked").symlink_to(
+        acervo / ".quarantine" / "evil", target_is_directory=True)
+    assert studio_pub._artifact_dir(acervo, "linked") is None
+
+
+def test_pub_resolve_tools_dir_prefers_root_copy(acervo, monkeypatch):
+    tools = acervo / "global" / "tools"
+    (tools / "harness").mkdir(parents=True)
+    (tools / "artifact_publish.py").write_text("# stub\n", encoding="utf-8")
+    (tools / "harness" / "validate_artifact_manifest.py").write_text(
+        "# stub\n", encoding="utf-8")
+    assert studio_pub._resolve_tools_dir(acervo) == str(tools)
+
+
+def test_pub_resolve_tools_dir_none_when_absent(acervo, tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "nohermes"))
+    monkeypatch.setenv("EXOCORTEX_HOME", str(tmp_path / "noexo"))
+    assert studio_pub._resolve_tools_dir(acervo) is None
+
+
+# ── Phase 3 Task 2: CLI runners against fake tools in the fixture ────────────
+
+def _mk_tools(acervo, *, validator_json=None, publish_json=None, publish_rc=0,
+              publish_stderr=""):
+    """Fake artifact_publish.py + validate_artifact_manifest.py inside the
+    fixture acervo. The publisher touches ran.flag so tests can assert
+    whether it was executed."""
+    tools = acervo / "global" / "tools"
+    (tools / "harness").mkdir(parents=True, exist_ok=True)
+    vj = validator_json if validator_json is not None else [
+        {"artifact": "x", "ok": True, "errors": [], "warnings": []}]
+    (tools / "harness" / "validate_artifact_manifest.py").write_text(
+        "import json, sys\n"
+        "print(json.dumps(%r))\n"
+        "sys.exit(0 if %r else 1)\n" % (vj, bool(vj[0].get("ok"))),
+        encoding="utf-8")
+    pj = publish_json if publish_json is not None else {
+        "status": "published", "folder_path": "exocortex/inbox",
+        "folder_id": "f1", "folder_link": "https://drive.example/f1",
+        "files": [{"name": "source.md", "drive_file_id": "d1",
+                   "webViewLink": "https://drive.example/d1",
+                   "sha256": "aa" * 32, "size": 12}]}
+    (tools / "artifact_publish.py").write_text(
+        "import json, os, sys\n"
+        "open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ran.flag'), 'w').close()\n"
+        "sys.stderr.write(%r)\n"
+        "print(json.dumps(%r, ensure_ascii=False))\n"
+        "sys.exit(%d)\n" % (publish_stderr, pj, publish_rc),
+        encoding="utf-8")
+    return tools
+
+
+def test_pub_run_validator_parses_ok(acervo):
+    d = _mk_artifact(acervo)
+    tools = _mk_tools(acervo)
+    gate = studio_pub._run_validator(str(tools), acervo, d)
+    assert gate == {"ok": True, "errors": [], "warnings": []}
+
+
+def test_pub_run_validator_reports_errors(acervo):
+    d = _mk_artifact(acervo)
+    tools = _mk_tools(acervo, validator_json=[
+        {"artifact": "x", "ok": False,
+         "errors": ["Missing required field: title"],
+         "warnings": ["No owner.id — artifact is orphaned"]}])
+    gate = studio_pub._run_validator(str(tools), acervo, d)
+    assert gate["ok"] is False
+    assert gate["errors"] == ["Missing required field: title"]
+    assert gate["warnings"] == ["No owner.id — artifact is orphaned"]
+
+
+def test_pub_run_validator_unparseable_raises(acervo):
+    d = _mk_artifact(acervo)
+    tools = acervo / "global" / "tools"
+    (tools / "harness").mkdir(parents=True, exist_ok=True)
+    (tools / "harness" / "validate_artifact_manifest.py").write_text(
+        "print('not json')\n", encoding="utf-8")
+    (tools / "artifact_publish.py").write_text("", encoding="utf-8")
+    with pytest.raises(studio_pub.PublishError):
+        studio_pub._run_validator(str(tools), acervo, d)
+
+
+def test_pub_run_publish_parses_receipt(acervo):
+    d = _mk_artifact(acervo)
+    tools = _mk_tools(acervo)
+    receipt = studio_pub._run_publish(str(tools), acervo, d)
+    assert receipt["status"] == "published"
+    assert receipt["files"][0]["sha256"] == "aa" * 32
+    assert (tools / "ran.flag").is_file()
+
+
+def test_pub_run_publish_drive_unconfigured(acervo):
+    d = _mk_artifact(acervo)
+    tools = _mk_tools(acervo, publish_rc=1, publish_stderr=
+                      "google_api.py não encontrado. Verifique a skill "
+                      "productivity/google-workspace no runtime Hermes.\n")
+    with pytest.raises(studio_pub.DriveNotConfigured):
+        studio_pub._run_publish(str(tools), acervo, d)
+
+
+def test_pub_run_publish_other_failure_raises(acervo):
+    d = _mk_artifact(acervo)
+    tools = _mk_tools(acervo, publish_rc=1, publish_stderr="boom: quota\n",
+                      publish_json={"status": "error"})
+    with pytest.raises(studio_pub.PublishError):
+        studio_pub._run_publish(str(tools), acervo, d)
+
+
+# ── Phase 3 Task 3: prepare + publish policies ───────────────────────────────
+
+def test_pub_prepare_happy(acervo):
+    _mk_artifact(acervo)
+    _mk_tools(acervo)
+    out = studio_pub.prepare(acervo, "art_20260712_relatorio")
+    assert out["ok"] is True
+    assert out["artifact"]["id"] == "art_20260712_relatorio"
+    assert out["artifact"]["title"] == "Relatório"
+    assert out["artifact"]["status"] == "draft"
+    assert out["artifact"]["drive_target"] == "exocortex/inbox"
+    assert out["gate"]["ok"] is True and out["can_publish"] is True
+    vis = {v["value"]: v for v in out["visibility_options"]}
+    assert vis["private"]["enabled"] is True
+    assert vis["public"]["enabled"] is False and vis["public"]["gate"]
+
+
+def test_pub_prepare_tools_missing(acervo, tmp_path, monkeypatch):
+    _mk_artifact(acervo)
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "nohermes"))
+    monkeypatch.setenv("EXOCORTEX_HOME", str(tmp_path / "noexo"))
+    out = studio_pub.prepare(acervo, "art_20260712_relatorio")
+    assert out == {"ok": False, "tools_missing": True}
+
+
+def test_pub_prepare_artifact_missing(acervo):
+    _mk_tools(acervo)
+    out = studio_pub.prepare(acervo, "art_20990101_nope")
+    assert out["ok"] is False and out["error"] == "artifact not found"
+
+
+def test_pub_prepare_bad_manifest(acervo):
+    d = _mk_artifact(acervo)
+    _mk_tools(acervo)
+    (d / "manifest.json").write_text("{not json", encoding="utf-8")
+    out = studio_pub.prepare(acervo, "art_20260712_relatorio")
+    assert out["ok"] is False and "manifest" in out["error"]
+
+
+def test_pub_publish_happy(acervo):
+    _mk_artifact(acervo)
+    _mk_tools(acervo)
+    out = studio_pub.publish(acervo, "art_20260712_relatorio")
+    assert out["ok"] is True
+    assert out["receipt"]["status"] == "published"
+
+
+def test_pub_publish_gate_failed_blocks_and_skips_upload(acervo):
+    _mk_artifact(acervo, status="ready")
+    tools = _mk_tools(acervo, validator_json=[
+        {"artifact": "x", "ok": False,
+         "errors": ["Anti-slop quality check failed (score: 20/50...)"],
+         "warnings": []}])
+    out = studio_pub.publish(acervo, "art_20260712_relatorio")
+    assert out["ok"] is False and out["gate_failed"] is True
+    assert out["gate"]["errors"]
+    assert not (tools / "ran.flag").exists()   # publish CLI never executed
+
+
+def test_pub_publish_public_requires_flag(acervo):
+    _mk_artifact(acervo)
+    _mk_tools(acervo)
+    out = studio_pub.publish(acervo, "art_20260712_relatorio",
+                             visibility="public")
+    assert out["ok"] is False and "approve_public" in out["error"]
+
+
+def test_pub_publish_public_gated_even_with_flag(acervo):
+    _mk_artifact(acervo)
+    tools = _mk_tools(acervo)
+    out = studio_pub.publish(acervo, "art_20260712_relatorio",
+                             visibility="public", approve_public=True)
+    assert out["ok"] is False and out["public_gated"] is True
+    assert not (tools / "ran.flag").exists()   # nothing uploaded
+
+
+def test_pub_publish_invalid_visibility(acervo):
+    _mk_artifact(acervo)
+    _mk_tools(acervo)
+    out = studio_pub.publish(acervo, "art_20260712_relatorio",
+                             visibility="unlisted")
+    assert out["ok"] is False and "visibility" in out["error"]
+
+
+def test_pub_publish_drive_unconfigured(acervo):
+    _mk_artifact(acervo)
+    _mk_tools(acervo, publish_rc=1, publish_stderr=
+              "google_api.py não encontrado.\n")
+    out = studio_pub.publish(acervo, "art_20260712_relatorio")
+    assert out["ok"] is False and out["drive_unconfigured"] is True
+
+
+# ── Phase 3 whole-branch review fixes ────────────────────────────────────────
+
+@pytest.mark.parametrize("dt", ["exocortex/inbox", ["a", "b"], 5, None])
+def test_pub_prepare_tolerates_non_dict_drive_target(acervo, dt):
+    """review I1: a malformed-but-parseable manifest (drive_target not a dict)
+    must NOT 500 — prepare returns a calm result with the default target."""
+    d = _mk_artifact(acervo)
+    _mk_tools(acervo)
+    m = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
+    m["drive_target"] = dt
+    (d / "manifest.json").write_text(json.dumps(m, ensure_ascii=False),
+                                     encoding="utf-8")
+    out = studio_pub.prepare(acervo, "art_20260712_relatorio")
+    assert out["ok"] is True
+    assert out["artifact"]["drive_target"] == "exocortex/inbox"
+
+
+def test_pub_prepare_route_non_dict_drive_target_no_500(acervo, session_ok, jcap):
+    """review I1 at the route: no 500 leak (operational-state guarantee)."""
+    d = _mk_artifact(acervo)
+    _mk_tools(acervo)
+    m = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
+    m["drive_target"] = "exocortex/inbox"   # a string, not a dict
+    (d / "manifest.json").write_text(json.dumps(m, ensure_ascii=False),
+                                     encoding="utf-8")
+    h = _Handler("/api/acervo/x/publish/prepare")
+    studio.handle_studio_post(h, {"session_id": "sid1",
+                                  "artifact_id": "art_20260712_relatorio"})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is True
+
+
+def test_pub_publish_real_drive_failure_not_misread_as_unconfigured(acervo):
+    """review M1: a genuine Drive failure whose traceback merely mentions the
+    google_api.py filename must NOT be misclassified as drive_unconfigured."""
+    _mk_artifact(acervo)
+    _mk_tools(acervo, publish_rc=1, publish_stderr=
+              'Traceback (most recent call last):\n'
+              '  File ".../google_api.py", line 12, in build_service\n'
+              'RuntimeError: Drive quota exceeded\n')
+    out = studio_pub.publish(acervo, "art_20260712_relatorio")
+    assert out["ok"] is False
+    assert not out.get("drive_unconfigured")
+    assert "error" in out
+
+
+# ── Phase 3 Task 4: publish routes ───────────────────────────────────────────
+
+def test_publish_prepare_route_happy(acervo, session_ok, jcap):
+    _mk_artifact(acervo)
+    _mk_tools(acervo)
+    h = _Handler("/api/acervo/x/publish/prepare")
+    studio.handle_studio_post(h, {"session_id": "sid1",
+                                  "artifact_id": "art_20260712_relatorio"})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is True
+    assert jcap["obj"]["gate"]["ok"] is True
+    assert jcap["obj"]["artifact"]["drive_target"] == "exocortex/inbox"
+
+
+def test_publish_prepare_route_bad_id_400(acervo, session_ok, jcap):
+    h = _Handler("/api/acervo/x/publish/prepare")
+    studio.handle_studio_post(h, {"session_id": "sid1", "artifact_id": "../evil"})
+    assert jcap["status"] == 400
+
+
+def test_publish_prepare_route_missing_404(acervo, session_ok, jcap):
+    _mk_tools(acervo)
+    h = _Handler("/api/acervo/x/publish/prepare")
+    studio.handle_studio_post(h, {"session_id": "sid1",
+                                  "artifact_id": "art_20990101_nope"})
+    assert jcap["status"] == 404
+
+
+def test_publish_prepare_route_tools_missing_calm(acervo, session_ok, jcap,
+                                                  tmp_path, monkeypatch):
+    _mk_artifact(acervo)
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "nohermes"))
+    monkeypatch.setenv("EXOCORTEX_HOME", str(tmp_path / "noexo"))
+    h = _Handler("/api/acervo/x/publish/prepare")
+    studio.handle_studio_post(h, {"session_id": "sid1",
+                                  "artifact_id": "art_20260712_relatorio"})
+    assert jcap["status"] == 200
+    assert jcap["obj"]["ok"] is False and jcap["obj"]["tools_missing"] is True
+    assert jcap["obj"]["message"]
+
+
+def test_publish_prepare_route_requires_session(acervo, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "_resolve_session_workspace", lambda sid: None)
+    h = _Handler("/api/acervo/x/publish/prepare")
+    studio.handle_studio_post(h, {"session_id": "ghost",
+                                  "artifact_id": "art_20260712_relatorio"})
+    assert jcap["status"] in (400, 404)
+
+
+def test_publish_route_happy(acervo, session_ok, jcap):
+    _mk_artifact(acervo)
+    _mk_tools(acervo)
+    h = _Handler("/api/acervo/x/publish")
+    studio.handle_studio_post(h, {"session_id": "sid1",
+                                  "artifact_id": "art_20260712_relatorio"})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is True
+    assert jcap["obj"]["receipt"]["status"] == "published"
+
+
+def test_publish_route_drive_unconfigured_calm(acervo, session_ok, jcap):
+    _mk_artifact(acervo)
+    _mk_tools(acervo, publish_rc=1,
+              publish_stderr="google_api.py não encontrado.\n")
+    h = _Handler("/api/acervo/x/publish")
+    studio.handle_studio_post(h, {"session_id": "sid1",
+                                  "artifact_id": "art_20260712_relatorio"})
+    assert jcap["status"] == 200
+    assert jcap["obj"]["ok"] is False and jcap["obj"]["drive_unconfigured"] is True
+    assert "Drive" in jcap["obj"]["message"]
+
+
+def test_publish_route_gate_failed_payload(acervo, session_ok, jcap):
+    _mk_artifact(acervo, status="ready")
+    _mk_tools(acervo, validator_json=[
+        {"artifact": "x", "ok": False, "errors": ["bad prose"], "warnings": []}])
+    h = _Handler("/api/acervo/x/publish")
+    studio.handle_studio_post(h, {"session_id": "sid1",
+                                  "artifact_id": "art_20260712_relatorio"})
+    assert jcap["status"] == 200
+    assert jcap["obj"]["ok"] is False and jcap["obj"]["gate_failed"] is True
+    assert jcap["obj"]["gate"]["errors"] == ["bad prose"]
+
+
+def test_publish_route_public_gated(acervo, session_ok, jcap):
+    _mk_artifact(acervo)
+    _mk_tools(acervo)
+    h = _Handler("/api/acervo/x/publish")
+    studio.handle_studio_post(h, {"session_id": "sid1",
+                                  "artifact_id": "art_20260712_relatorio",
+                                  "visibility": "public",
+                                  "approve_public": True})
+    assert jcap["status"] == 200
+    assert jcap["obj"]["ok"] is False and jcap["obj"]["public_gated"] is True
+
+
+def test_publish_route_requires_session(acervo, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "_resolve_session_workspace", lambda sid: None)
+    h = _Handler("/api/acervo/x/publish")
+    studio.handle_studio_post(h, {"session_id": "ghost",
+                                  "artifact_id": "art_20260712_relatorio"})
+    assert jcap["status"] in (400, 404)
+
+
+def test_post_dispatcher_delegates_publish(acervo, session_ok, jcap):
+    _mk_artifact(acervo)
+    _mk_tools(acervo)
+    h = _Handler("/api/acervo/x/publish/prepare")
+    ax.handle_acervo_x_post(h, {"session_id": "sid1",
+                                "artifact_id": "art_20260712_relatorio"})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is True
