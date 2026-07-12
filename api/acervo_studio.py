@@ -506,6 +506,79 @@ def handle_intake_promote(handler, body):
                               "error": result.get("error", "promote failed")})
 
 
+# region: publish (Phase 3 — outbound; deterministic, no cognition)
+
+def handle_publish_prepare(handler, body):
+    """POST /api/acervo/x/publish/prepare {session_id, artifact_id} — quality
+    gate + Drive target + visibility options for one artifact package.
+    Read-only; the confirmed upload is handle_publish (propose-then-approve)."""
+    import api.routes as routes
+    import api.acervo_studio_publish as pub
+    body = body or {}
+    sid = _intake_session(handler, routes, body)
+    if sid is None:
+        return True
+    art_id = str(body.get("artifact_id", "") or "").strip().strip("/")
+    if not pub._valid_artifact_id(art_id):
+        return routes.bad(handler, "invalid artifact id")
+    root = routes._acervo_root()
+    if pub._artifact_dir(root, art_id) is None:
+        return routes.j(handler, {"error": "artifact not found"}, status=404)
+    result = pub.prepare(root, art_id)
+    if result.get("ok"):
+        return routes.j(handler, result)
+    # Operational states return 200 with an ok flag so the frontend renders
+    # them calmly (api() throws only on non-2xx). Malformed already 400/404'd.
+    if result.get("tools_missing"):
+        return routes.j(handler, {"ok": False, "tools_missing": True,
+                                  "message": "publicador não encontrado — "
+                                             "ferramentas do acervo ausentes no runtime"})
+    return routes.j(handler, {"ok": False,
+                              "error": result.get("error", "prepare failed")})
+
+
+def handle_publish(handler, body):
+    """POST /api/acervo/x/publish {session_id, artifact_id, visibility?,
+    approve_public?} — the CONFIRMED Drive publish (Draft-First: private
+    delivery only; public share is owner-gated and refused calmly)."""
+    import api.routes as routes
+    import api.acervo_studio_publish as pub
+    body = body or {}
+    sid = _intake_session(handler, routes, body)
+    if sid is None:
+        return True
+    art_id = str(body.get("artifact_id", "") or "").strip().strip("/")
+    if not pub._valid_artifact_id(art_id):
+        return routes.bad(handler, "invalid artifact id")
+    root = routes._acervo_root()
+    if pub._artifact_dir(root, art_id) is None:
+        return routes.j(handler, {"error": "artifact not found"}, status=404)
+    result = pub.publish(root, art_id,
+                         visibility=str(body.get("visibility", "private")
+                                        or "private"),
+                         approve_public=bool(body.get("approve_public", False)))
+    if result.get("ok"):
+        return routes.j(handler, {"ok": True, "receipt": result.get("receipt")})
+    if result.get("drive_unconfigured"):
+        return routes.j(handler, {"ok": False, "drive_unconfigured": True,
+                                  "message": "Drive não configurado — provisione "
+                                             "as credenciais do Google Drive no runtime"})
+    if result.get("tools_missing"):
+        return routes.j(handler, {"ok": False, "tools_missing": True,
+                                  "message": "publicador não encontrado — "
+                                             "ferramentas do acervo ausentes no runtime"})
+    if result.get("gate_failed"):
+        return routes.j(handler, {"ok": False, "gate_failed": True,
+                                  "gate": result.get("gate"),
+                                  "message": "gate de qualidade reprovou — "
+                                             "revise o artefato"})
+    if result.get("public_gated"):
+        return routes.j(handler, {"ok": False, "public_gated": True,
+                                  "message": result.get("message")})
+    return routes.j(handler, {"ok": False,
+                              "error": result.get("error", "publish failed")})
+
+
 # region: dispatchers (delegation targets of the MOD-009 fallbacks)
 
 def handle_studio_get(handler, parsed):
@@ -534,4 +607,8 @@ def handle_studio_post(handler, body):
         return handle_intake_triage(handler, body)
     if path == "/api/acervo/x/intake/item/promote":
         return handle_intake_promote(handler, body)
+    if path == "/api/acervo/x/publish/prepare":
+        return handle_publish_prepare(handler, body)
+    if path == "/api/acervo/x/publish":
+        return handle_publish(handler, body)
     return routes.bad(handler, "unknown acervo explorer endpoint", 404)

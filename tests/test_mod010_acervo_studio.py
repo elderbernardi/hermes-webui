@@ -1026,3 +1026,114 @@ def test_pub_publish_drive_unconfigured(acervo):
               "google_api.py não encontrado.\n")
     out = studio_pub.publish(acervo, "art_20260712_relatorio")
     assert out["ok"] is False and out["drive_unconfigured"] is True
+
+
+# ── Phase 3 Task 4: publish routes ───────────────────────────────────────────
+
+def test_publish_prepare_route_happy(acervo, session_ok, jcap):
+    _mk_artifact(acervo)
+    _mk_tools(acervo)
+    h = _Handler("/api/acervo/x/publish/prepare")
+    studio.handle_studio_post(h, {"session_id": "sid1",
+                                  "artifact_id": "art_20260712_relatorio"})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is True
+    assert jcap["obj"]["gate"]["ok"] is True
+    assert jcap["obj"]["artifact"]["drive_target"] == "exocortex/inbox"
+
+
+def test_publish_prepare_route_bad_id_400(acervo, session_ok, jcap):
+    h = _Handler("/api/acervo/x/publish/prepare")
+    studio.handle_studio_post(h, {"session_id": "sid1", "artifact_id": "../evil"})
+    assert jcap["status"] == 400
+
+
+def test_publish_prepare_route_missing_404(acervo, session_ok, jcap):
+    _mk_tools(acervo)
+    h = _Handler("/api/acervo/x/publish/prepare")
+    studio.handle_studio_post(h, {"session_id": "sid1",
+                                  "artifact_id": "art_20990101_nope"})
+    assert jcap["status"] == 404
+
+
+def test_publish_prepare_route_tools_missing_calm(acervo, session_ok, jcap,
+                                                  tmp_path, monkeypatch):
+    _mk_artifact(acervo)
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "nohermes"))
+    monkeypatch.setenv("EXOCORTEX_HOME", str(tmp_path / "noexo"))
+    h = _Handler("/api/acervo/x/publish/prepare")
+    studio.handle_studio_post(h, {"session_id": "sid1",
+                                  "artifact_id": "art_20260712_relatorio"})
+    assert jcap["status"] == 200
+    assert jcap["obj"]["ok"] is False and jcap["obj"]["tools_missing"] is True
+    assert jcap["obj"]["message"]
+
+
+def test_publish_prepare_route_requires_session(acervo, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "_resolve_session_workspace", lambda sid: None)
+    h = _Handler("/api/acervo/x/publish/prepare")
+    studio.handle_studio_post(h, {"session_id": "ghost",
+                                  "artifact_id": "art_20260712_relatorio"})
+    assert jcap["status"] in (400, 404)
+
+
+def test_publish_route_happy(acervo, session_ok, jcap):
+    _mk_artifact(acervo)
+    _mk_tools(acervo)
+    h = _Handler("/api/acervo/x/publish")
+    studio.handle_studio_post(h, {"session_id": "sid1",
+                                  "artifact_id": "art_20260712_relatorio"})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is True
+    assert jcap["obj"]["receipt"]["status"] == "published"
+
+
+def test_publish_route_drive_unconfigured_calm(acervo, session_ok, jcap):
+    _mk_artifact(acervo)
+    _mk_tools(acervo, publish_rc=1,
+              publish_stderr="google_api.py não encontrado.\n")
+    h = _Handler("/api/acervo/x/publish")
+    studio.handle_studio_post(h, {"session_id": "sid1",
+                                  "artifact_id": "art_20260712_relatorio"})
+    assert jcap["status"] == 200
+    assert jcap["obj"]["ok"] is False and jcap["obj"]["drive_unconfigured"] is True
+    assert "Drive" in jcap["obj"]["message"]
+
+
+def test_publish_route_gate_failed_payload(acervo, session_ok, jcap):
+    _mk_artifact(acervo, status="ready")
+    _mk_tools(acervo, validator_json=[
+        {"artifact": "x", "ok": False, "errors": ["bad prose"], "warnings": []}])
+    h = _Handler("/api/acervo/x/publish")
+    studio.handle_studio_post(h, {"session_id": "sid1",
+                                  "artifact_id": "art_20260712_relatorio"})
+    assert jcap["status"] == 200
+    assert jcap["obj"]["ok"] is False and jcap["obj"]["gate_failed"] is True
+    assert jcap["obj"]["gate"]["errors"] == ["bad prose"]
+
+
+def test_publish_route_public_gated(acervo, session_ok, jcap):
+    _mk_artifact(acervo)
+    _mk_tools(acervo)
+    h = _Handler("/api/acervo/x/publish")
+    studio.handle_studio_post(h, {"session_id": "sid1",
+                                  "artifact_id": "art_20260712_relatorio",
+                                  "visibility": "public",
+                                  "approve_public": True})
+    assert jcap["status"] == 200
+    assert jcap["obj"]["ok"] is False and jcap["obj"]["public_gated"] is True
+
+
+def test_publish_route_requires_session(acervo, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "_resolve_session_workspace", lambda sid: None)
+    h = _Handler("/api/acervo/x/publish")
+    studio.handle_studio_post(h, {"session_id": "ghost",
+                                  "artifact_id": "art_20260712_relatorio"})
+    assert jcap["status"] in (400, 404)
+
+
+def test_post_dispatcher_delegates_publish(acervo, session_ok, jcap):
+    _mk_artifact(acervo)
+    _mk_tools(acervo)
+    h = _Handler("/api/acervo/x/publish/prepare")
+    ax.handle_acervo_x_post(h, {"session_id": "sid1",
+                                "artifact_id": "art_20260712_relatorio"})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is True
