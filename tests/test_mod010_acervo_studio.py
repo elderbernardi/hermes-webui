@@ -675,7 +675,7 @@ def test_triage_route_requires_session(acervo, jcap, monkeypatch):
 def _mock_commit_ok(monkeypatch, acervo):
     """Mock the deterministic acervoctl write to succeed with a receipt, and
     actually drop a page file so created_path is real-ish."""
-    def _fake(root, slug, nature, title, body_md, class_name, description):
+    def _fake(root, slug, nature, title, body_md, class_name, description, tags=None):
         rel = "micro/%s/%s/%s.md" % (slug, nature, studio._slugify(title))
         p = acervo / rel
         p.parent.mkdir(parents=True, exist_ok=True)

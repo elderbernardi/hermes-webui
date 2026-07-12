@@ -17,6 +17,7 @@ not by editing any upstream file. Degrades gracefully when Hermes is unavailable
 (raises AgentUnavailable, which the routes translate to a calm "agente offline").
 """
 
+import datetime
 import json
 import logging
 import os
@@ -221,7 +222,7 @@ _PROMOTE_SYSTEM = (
     "added separately). Preserve facts; structure and summarize, never invent. Reply "
     "with ONE JSON object and nothing else: body_markdown (the page content), class "
     "(\"perene\" for durable truth, \"volátil\" for transient state), description (one "
-    "short sentence)."
+    "short sentence), tags (a short list of lowercase keyword strings)."
 )
 
 
@@ -272,6 +273,42 @@ def _scaffold_microverso(root, slug):
         log.write_text("# Log — %s\n" % slug, encoding="utf-8")
 
 
+# nature dir -> OKF/v0.2 `type` (validator V2-020 requires dir↔type consistency).
+_NATURE_TO_TYPE = {
+    "knowledge": "knowledge", "context": "context", "decisions": "decision",
+    "workflows": "workflow", "contracts": "contract", "reflections": "reflection",
+    "persona": "persona", "prompts": "prompt", "templates": "template",
+    "tools": "tool", "skills": "skill",
+}
+
+
+def _build_okf_page(nature, title, description, tags, class_name, body, now=None):
+    """Compose a schema-v0.2 page (frontmatter + body) that acervoctl commit-write
+    will accept (it validates but does NOT synthesize frontmatter). Format mirrors
+    acervo_semantic_core.new_object's proven fm_lines."""
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    type_ = _NATURE_TO_TYPE.get(nature, "knowledge")
+    tag_list = ", ".join(json.dumps(str(t), ensure_ascii=False) for t in (tags or []))
+    fm = "\n".join([
+        "---",
+        "schema: acervo/v0.2",
+        "type: %s" % type_,
+        "title: %s" % json.dumps(str(title or ""), ensure_ascii=False),
+        "description: %s" % json.dumps(str(description or title or ""), ensure_ascii=False),
+        "tags: [%s]" % tag_list,
+        "created_at: %s" % now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "class: %s" % ("perene" if class_name == "perene" else "volátil"),
+        "status: draft",
+        "epistemic: fact",
+        "confidence: high",
+        'sources: [{type: agent-inference, ref: "acervoctl://acervo-studio-promote"}]',
+        "observed_at: %s" % now.strftime("%Y-%m-%d"),
+        "extraction: agent",
+        "---",
+    ])
+    return fm + "\n\n" + (body or "").strip() + "\n"
+
+
 def _acervoctl(scripts_dir, root, args):
     """Run one acervoctl subcommand (list form, no shell). Returns CompletedProcess."""
     env = dict(os.environ)
@@ -282,19 +319,22 @@ def _acervoctl(scripts_dir, root, args):
         timeout=_ACERVOCTL_TIMEOUT)
 
 
-def _commit_via_acervoctl(root, slug, nature, title, body_md, class_name, description):
-    """prepare-write -> commit-write against `root` (the fixture/real acervo). The
-    scope guard runs inside commit-write. Returns the parsed receipt dict. Raises
-    PromoteError on any failure (surfaced to the user as a failed promote)."""
+def _commit_via_acervoctl(root, slug, nature, title, body_md, class_name,
+                          description, tags=None):
+    """prepare-write -> commit-write against `root` (the fixture/real acervo). MY
+    code builds the schema-v0.2 page (commit-write validates but won't synthesize
+    frontmatter); the scope guard runs inside commit-write. Returns the parsed
+    receipt dict. Raises PromoteError on any failure."""
     scripts_dir = _resolve_acervoctl_dir()
     if scripts_dir is None:
         raise PromoteError("acervo control plane not found")
     root_s = str(root)
+    page = _build_okf_page(nature, title, description, tags, class_name, body_md)
     with tempfile.TemporaryDirectory() as tmp:
         receipt_path = os.path.join(tmp, "r.json")
         body_path = os.path.join(tmp, "body.md")
         with open(body_path, "w", encoding="utf-8") as fh:
-            fh.write(body_md)
+            fh.write(page)
         try:
             p1 = _acervoctl(scripts_dir, root, [
                 "prepare-write", "--acervo-root", root_s, "--microverso", slug,
@@ -365,11 +405,15 @@ def promote(root, iid, routing, *, session=None):
     body_md = str(crafted.get("body_markdown", "") or "").strip() or content or title
     class_name = str(crafted.get("class", "") or "").strip().lower()
     class_name = "perene" if class_name == "perene" else "volátil"
-    description = str(crafted.get("description", "") or "").strip()[:200] or title
+    description = str(crafted.get("description", "") or "").strip()[:160] or title
+    raw_tags = crafted.get("tags") if isinstance(crafted.get("tags"), list) else []
+    tags = [re.sub(r"[^a-z0-9-]+", "-", str(t).strip().lower()).strip("-")
+            for t in raw_tags][:8]
+    tags = [t for t in tags if t]
     try:
         _scaffold_microverso(root, slug)
         receipt = _commit_via_acervoctl(root, slug, nature, title, body_md,
-                                        class_name, description)
+                                        class_name, description, tags)
     except PromoteError as e:
         return {"ok": False, "error": str(e)}
     _move_to_promoted(root, iid)
