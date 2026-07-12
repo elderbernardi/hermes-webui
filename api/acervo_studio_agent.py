@@ -542,3 +542,122 @@ def propose_assist(root, rel_path, op, *, session=None):
     if proposal is None:
         return {"ok": False, "error": "could not parse a valid proposal"}
     return {"ok": True, "op": op, "proposal": proposal}
+
+
+_ASK_SYSTEM = (
+    "You are the Exocortex acervo answerer. Answer the question USING ONLY the "
+    "provided acervo excerpts, in the question's language, concisely. If the "
+    "excerpts do not contain the answer, say you don't know. Reply with ONE JSON "
+    "object and nothing else: {\"answer\": \"...\", \"sources\": [\"<path>\"]} where "
+    "sources lists only the excerpt paths you actually used.")
+
+_ASK_SCAN_MAX = 2000
+_ASK_BODY_CHARS = 4000
+_ASK_EXCERPT_PAD = 160
+_ASK_STOPWORDS = {"o", "a", "os", "as", "de", "do", "da", "e", "que", "qual",
+                  "the", "of", "is", "to", "in", "an"}
+
+
+def _ask_terms(question):
+    return [t for t in re.findall(r"[a-z0-9]+", str(question or "").lower())
+            if len(t) > 1 and t not in _ASK_STOPWORDS]
+
+
+def _ask_excerpt(body, terms):
+    low = body.lower()
+    for t in terms:
+        i = low.find(t)
+        if i >= 0:
+            a = max(0, i - _ASK_EXCERPT_PAD)
+            b = min(len(body), i + _ASK_EXCERPT_PAD)
+            return ("…" if a > 0 else "") + body[a:b].strip() + ("…" if b < len(body) else "")
+    return body[:_ASK_EXCERPT_PAD].strip()
+
+
+def _ask_context(root, question, k=5):
+    """Bounded in-process retrieval over global/shared/micro × the 11 natures.
+    Scores term overlap (title×3, tags×2, description×2, body×1); returns the
+    top-k {path, title, excerpt}. Skips `_`/`.`-prefixed dirs (so `_meta`,
+    `.quarantine` never contribute)."""
+    import api.routes as routes
+    terms = _ask_terms(question)
+    if not terms:
+        return []
+    bases = [root / "global", root / "shared"]
+    micro = root / "micro"
+    if micro.is_dir():
+        try:
+            for d in sorted(micro.iterdir(), key=lambda p: p.name):
+                if d.is_dir() and not d.name.startswith(("_", ".")):
+                    bases.append(d)
+        except OSError:
+            pass
+    scored = []
+    scanned = 0
+    for base in bases:
+        if not base.is_dir():
+            continue
+        for nat in routes._ACERVO_NATURES:
+            nd = base / nat
+            if not nd.is_dir():
+                continue
+            try:
+                entries = sorted(nd.iterdir(), key=lambda p: p.name)
+            except OSError:
+                continue
+            for f in entries:
+                if scanned >= _ASK_SCAN_MAX:
+                    break
+                if not f.is_file() or f.suffix.lower() != ".md" \
+                   or f.name.startswith(("_", ".")):
+                    continue
+                scanned += 1
+                meta = routes._read_frontmatter_meta(
+                    f, ["title", "description", "tags"])
+                title = meta.get("title", f.stem)
+                try:
+                    body = f.read_text(encoding="utf-8", errors="replace")[:_ASK_BODY_CHARS]
+                except OSError:
+                    continue
+                tl, dl, gl, bl = (title.lower(), meta.get("description", "").lower(),
+                                  meta.get("tags", "").lower(), body.lower())
+                score = 0
+                for t in terms:
+                    score += 3 * tl.count(t) + 2 * dl.count(t) + 2 * gl.count(t) + bl.count(t)
+                if score > 0:
+                    try:
+                        rel = str(f.resolve().relative_to(root.resolve()))
+                    except (OSError, ValueError):
+                        continue
+                    scored.append((score, rel, title, _ask_excerpt(body, terms)))
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    return [{"path": p, "title": t, "excerpt": e}
+            for (_s, p, t, e) in scored[:max(1, int(k))]]
+
+
+def ask_acervo(root, question, *, session=None):
+    """Semantic Q&A over the acervo: retrieve bounded context, ask Hermes to
+    answer USING ONLY that context, validate the cited sources are a subset of
+    the retrieved paths. PROPOSAL-ONLY (never writes). Returns
+    {ok, answer, sources} | {ok:False, no_context} | offline | error."""
+    q = str(question or "").strip()
+    if not q:
+        return {"ok": False, "error": "question is required"}
+    ctx = _ask_context(root, q, k=5)
+    if not ctx:
+        return {"ok": False, "no_context": True}
+    allowed = {c["path"] for c in ctx}
+    blocks = "\n\n".join("[%s] %s\n%s" % (c["path"], c["title"], c["excerpt"])
+                         for c in ctx)
+    user_prompt = "Question: %s\n\nAcervo excerpts:\n%s\n" % (q, blocks)
+    try:
+        text = _run_agent_text(_ASK_SYSTEM, user_prompt, session=session)
+    except AgentUnavailable:
+        return {"ok": False, "offline": True}
+    obj = _extract_json(text) or {}
+    answer = str(obj.get("answer", "") or "").strip()
+    if not answer:
+        return {"ok": False, "error": "could not parse an answer"}
+    raw_sources = obj.get("sources") if isinstance(obj.get("sources"), list) else []
+    sources = [str(s) for s in raw_sources if str(s) in allowed]
+    return {"ok": True, "answer": answer[:4000], "sources": sources}

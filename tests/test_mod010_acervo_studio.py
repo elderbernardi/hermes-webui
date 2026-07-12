@@ -1273,3 +1273,68 @@ def test_assist_unparseable(acervo, monkeypatch):
                         lambda sp, up, **k: "no json here")
     out = studio_agent.propose_assist(acervo, rel, "rewrite")
     assert out["ok"] is False and "error" in out
+
+
+# ── Phase 4 Task 2: ask-the-acervo (retrieval-grounded) ──────────────────────
+
+def test_ask_context_scores_and_returns_hit(acervo):
+    _mk_page(acervo, "global/knowledge/preco.md",
+             "---\ntitle: Tabela de preço\ntags: [preco]\n---\n\nO preço do produto X é R$ 10.\n")
+    _mk_page(acervo, "global/knowledge/outro.md",
+             "---\ntitle: Reunião\n---\n\nAta da reunião de segunda.\n")
+    ctx = studio_agent._ask_context(acervo, "qual o preço do produto X?", k=3)
+    assert ctx and ctx[0]["path"] == "global/knowledge/preco.md"
+    assert "excerpt" in ctx[0] and ctx[0]["excerpt"]
+
+
+def test_ask_context_skips_meta_and_dot(acervo):
+    _mk_page(acervo, "micro/demo/_meta/index.md",
+             "---\ntitle: Index\n---\n\npreço preço preço\n")
+    _mk_page(acervo, "micro/demo/knowledge/p.md",
+             "---\ntitle: Preço demo\n---\n\nO preço é 5.\n")
+    ctx = studio_agent._ask_context(acervo, "preço", k=5)
+    paths = [c["path"] for c in ctx]
+    assert "micro/demo/knowledge/p.md" in paths
+    assert not any("/_meta/" in p for p in paths)
+
+
+def test_ask_context_k_cap(acervo):
+    for i in range(6):
+        _mk_page(acervo, "global/knowledge/p%d.md" % i,
+                 "---\ntitle: Preço %d\n---\n\npreço tabelado item.\n" % i)
+    ctx = studio_agent._ask_context(acervo, "preço tabelado", k=3)
+    assert len(ctx) == 3
+
+
+def test_ask_acervo_happy_subset_sources(acervo, monkeypatch):
+    _mk_page(acervo, "global/knowledge/preco.md",
+             "---\ntitle: Preço\n---\n\nO preço do X é 10.\n")
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: '{"answer":"O preço do X é 10.",'
+                                            '"sources":["global/knowledge/preco.md","micro/fake/x.md"]}')
+    out = studio_agent.ask_acervo(acervo, "qual o preço do X?")
+    assert out["ok"] is True and "10" in out["answer"]
+    # a source not in the retrieved context is dropped (grounding)
+    assert out["sources"] == ["global/knowledge/preco.md"]
+
+
+def test_ask_acervo_no_context(acervo, monkeypatch):
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: (_ for _ in ()).throw(AssertionError("agent called with no context")))
+    out = studio_agent.ask_acervo(acervo, "algo que não existe zzz")
+    assert out["ok"] is False and out["no_context"] is True
+
+
+def test_ask_acervo_offline(acervo, monkeypatch):
+    _mk_page(acervo, "global/knowledge/preco.md",
+             "---\ntitle: Preço\n---\n\nO preço do X é 10.\n")
+    def _boom(sp, up, **k):
+        raise studio_agent.AgentUnavailable("no runtime")
+    monkeypatch.setattr(studio_agent, "_run_agent_text", _boom)
+    out = studio_agent.ask_acervo(acervo, "qual o preço do X?")
+    assert out == {"ok": False, "offline": True}
+
+
+def test_ask_acervo_empty_question(acervo):
+    out = studio_agent.ask_acervo(acervo, "   ")
+    assert out["ok"] is False and "error" in out
