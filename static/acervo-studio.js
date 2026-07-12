@@ -275,6 +275,7 @@
         if (act === 'edit') acervoStudioEdit();
         else if (act === 'stage') acervoStudioStage();
         else if (act === 'download') acervoStudioDownload();
+        else if (act === 'publish') { if (typeof acervoStudioPublishPrepare === 'function') acervoStudioPublishPrepare(); }
         else if (act === 'more') _toggleMenu(b);
       });
     });
@@ -341,10 +342,12 @@
     var reader = root.querySelector('[data-axs="reader"]');
     reader.innerHTML =
       '<div class="axs-crumb"><b>_artifacts</b> › ' + _esc(id) +
-      '  <div class="axs-acts"><button type="button" class="axs-act" data-axs-act="download">⬇ Baixar (zip)</button></div></div>' +
+      '  <div class="axs-acts"><button type="button" class="axs-act" data-axs-act="download">⬇ Baixar (zip)</button>' +
+      '<button type="button" class="axs-act axs-act-primary" data-axs-act="publish">⇪ Publicar no Drive</button></div></div>' +
       '<div class="axs-doc">' +
       '  <h1 class="axs-title">📦 ' + _esc(title || id) + '</h1>' +
       '  <div class="axs-empty">Pacote de artefato — o download inclui manifest.json, source/ e exports/.</div>' +
+      '  <div class="axs-pub" data-axs-pub></div>' +
       '</div>';
     _wireActs(reader);
   }
@@ -805,6 +808,123 @@
     }
   }
   window.acervoStudioPromote = acervoStudioPromote;
+
+  // ── Phase 3: publish (outbound) — gate → confirm → receipt ───────────────
+  function _pubBox() {
+    var root = _root();
+    return root && root.querySelector('[data-axs-pub]');
+  }
+
+  function _safeHttp(u) {
+    u = String(u || '');
+    return /^https:\/\//i.test(u) ? u : '';
+  }
+
+  async function acervoStudioPublishPrepare() {
+    var box = _pubBox();
+    if (!box || !AXS.artifactId) return;
+    box.innerHTML = '<div class="axs-env-note">Verificando o gate de qualidade…</div>';
+    var r;
+    try {
+      r = await api('/api/acervo/x/publish/prepare', {
+        method: 'POST',
+        body: JSON.stringify({ session_id: _sid(), artifact_id: AXS.artifactId })
+      });
+    } catch (e) {
+      box.innerHTML = '<div class="axs-env-note">' + _esc('Falha ao preparar publicação' + _detail(e)) + '</div>';
+      return;
+    }
+    if (!r || !r.ok) {
+      var msg = (r && (r.message || r.error)) || 'Não foi possível preparar a publicação.';
+      box.innerHTML = '<div class="axs-env-note">' + _esc(msg) + '</div>';
+      return;
+    }
+    _renderPublishGate(box, r);
+  }
+  window.acervoStudioPublishPrepare = acervoStudioPublishPrepare;
+
+  function _renderPublishGate(box, r) {
+    var gate = r.gate || { ok: false, errors: [], warnings: [] };
+    var art = r.artifact || {};
+    var items = '';
+    (gate.errors || []).forEach(function (x) { items += '<li class="axs-pub-err">' + _esc(x) + '</li>'; });
+    (gate.warnings || []).forEach(function (x) { items += '<li class="axs-pub-warn">' + _esc(x) + '</li>'; });
+    var vis = (r.visibility_options || []).map(function (v) {
+      return '<label class="axs-pub-vis' + (v.enabled ? '' : ' axs-pub-vis-off') + '"' +
+        (v.enabled ? '' : ' title="' + _esc(v.gate || 'indisponível') + '"') + '>' +
+        '<input type="radio" name="axsPubVis" value="' + _esc(v.value) + '"' +
+        (v.value === 'private' ? ' checked' : '') + (v.enabled ? '' : ' disabled') + '> ' +
+        _esc(v.label) + '</label>';
+    }).join('');
+    box.innerHTML =
+      '<div class="axs-pub-card">' +
+      '  <div class="axs-prop-head">Publicar no Drive — ' + _esc(art.title || art.id || '') +
+      '  <span class="axs-pub-status">' + _esc(art.status || '') + '</span></div>' +
+      '  <div class="axs-pub-target">Destino: <code>' + _esc(art.drive_target || '') + '</code>' +
+      (r.drive_probe === false ? ' <span class="axs-pub-hint">· Drive não configurado neste runtime</span>' : '') +
+      '  </div>' +
+      '  <div class="axs-pub-gate ' + (gate.ok ? 'axs-pub-gate-ok' : 'axs-pub-gate-bad') + '">' +
+      (gate.ok ? '✓ Gate de qualidade aprovado' : '✗ Gate de qualidade reprovou — revise o artefato') +
+      (items ? '<ul class="axs-pub-issues">' + items + '</ul>' : '') + '</div>' +
+      '  <div class="axs-pub-visrow">' + vis + '</div>' +
+      '  <div class="axs-acts">' +
+      '    <button type="button" class="axs-act axs-act-primary" data-pub-go' + (gate.ok ? '' : ' disabled') + '>⇪ Publicar</button>' +
+      '  </div>' +
+      '  <div class="axs-env-note" data-pub-note>Draft-First: a entrega é privada no seu Drive; compartilhar publicamente exige aprovação do owner.</div>' +
+      '</div>';
+    var go = box.querySelector('[data-pub-go]');
+    if (go) go.addEventListener('click', function () { acervoStudioPublishConfirm(); });
+  }
+
+  function _renderPublishReceipt(box, receipt) {
+    var flink = _safeHttp(receipt.folder_link);
+    var files = (receipt.files || []).map(function (f) {
+      var wl = _safeHttp(f.webViewLink);
+      return '<li><code>' + _esc(f.name || '') + '</code>' +
+        (f.sha256 ? ' <span class="axs-pub-sha">sha256:' + _esc(String(f.sha256).slice(0, 12)) + '…</span>' : '') +
+        (wl ? ' — <a href="' + _esc(wl) + '" target="_blank" rel="noopener">abrir</a>' : '') +
+        '</li>';
+    }).join('');
+    box.innerHTML =
+      '<div class="axs-pub-card axs-pub-done">' +
+      '  <div class="axs-prop-head">✓ Publicado no Drive</div>' +
+      '  <div class="axs-pub-target">Pasta: <code>' + _esc(receipt.folder_path || '') + '</code>' +
+      (flink ? ' — <a href="' + _esc(flink) + '" target="_blank" rel="noopener">abrir no Drive</a>' : '') + '</div>' +
+      (files ? '<ul class="axs-pub-files">' + files + '</ul>' : '') +
+      '  <div class="axs-env-note">Entrega privada (Draft-First) — recibo SHA-256 gravado em receipts/.</div>' +
+      '</div>';
+  }
+
+  async function acervoStudioPublishConfirm() {
+    var box = _pubBox();
+    if (!box || !AXS.artifactId) return;
+    var btn = box.querySelector('[data-pub-go]');
+    if (btn) btn.disabled = true;
+    var note = box.querySelector('[data-pub-note]');
+    if (note) note.textContent = 'Publicando no Drive…';
+    var r;
+    try {
+      r = await api('/api/acervo/x/publish', {
+        method: 'POST',
+        body: JSON.stringify({ session_id: _sid(), artifact_id: AXS.artifactId, visibility: 'private' }),
+        timeoutMs: 300000  // a Drive upload can take a while
+      });
+    } catch (e) {
+      if (btn) btn.disabled = false;
+      if (note) note.textContent = 'Falha ao publicar' + _detail(e);
+      return;
+    }
+    if (r && r.ok && r.receipt) {
+      _renderPublishReceipt(box, r.receipt);
+      _toast('Publicado no Drive', 'success');
+      return;
+    }
+    if (btn) btn.disabled = false;
+    var msg = (r && (r.message || r.error)) || 'Não foi possível publicar.';
+    if (note) note.textContent = msg;
+    _toast(msg, 'error');
+  }
+  window.acervoStudioPublishConfirm = acervoStudioPublishConfirm;
 
   // ── Phase 2a: intake capture ─────────────────────────────────────────────
   function _readFileB64(file) {

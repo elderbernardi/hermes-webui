@@ -123,3 +123,22 @@
 .axs-prop { margin-top: 12px; padding: 12px; border: 1px solid var(--axs-border, #3a3a3a); border-radius: 8px; }
 .axs-prop-head { font-weight: 600; margin-bottom: 8px; }
 .axs-prop-why { font-weight: 400; opacity: .75; }
+
+/* Phase 3: publish (outbound) */
+.axs-pub:empty { display: none; }
+.axs-pub-card { margin-top: 14px; padding: 12px; border: 1px solid var(--axs-bd, #3a3a3a); border-radius: 8px; }
+.axs-pub-status { font: 600 10px/1 var(--axs-mono); color: var(--axs-mut); margin-left: 6px; text-transform: uppercase; }
+.axs-pub-target { font-size: 12.5px; margin: 6px 0; }
+.axs-pub-target code { font-family: var(--axs-mono); }
+.axs-pub-hint { color: var(--axs-mut); font-size: 11.5px; }
+.axs-pub-gate { margin: 8px 0; padding: 8px 10px; border-radius: 6px; font: 600 12px/1.4 var(--axs-sans); }
+.axs-pub-gate-ok { background: rgba(126,201,140,.12); color: var(--axs-ok, #7EC98C); }
+.axs-pub-gate-bad { background: rgba(220,120,120,.12); color: #d08080; }
+.axs-pub-issues { margin: 6px 0 0; padding-left: 18px; font-weight: 400; }
+.axs-pub-err { color: #d08080; }
+.axs-pub-warn { color: var(--axs-mut); }
+.axs-pub-visrow { display: flex; gap: 14px; margin: 8px 0; font-size: 12.5px; }
+.axs-pub-vis-off { opacity: .55; cursor: not-allowed; }
+.axs-pub-files { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; }
+.axs-pub-sha { font: 400 10.5px/1 var(--axs-mono); color: var(--axs-mut); }
+.axs-pub-done { border-color: var(--axs-accbd); }
