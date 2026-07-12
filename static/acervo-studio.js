@@ -44,6 +44,9 @@
     // position:fixed (the MOD-009 lesson).
     if (root.parentElement !== document.body) document.body.appendChild(root);
     root.className = 'axs-root';
+    root.setAttribute('role', 'dialog');
+    root.setAttribute('aria-modal', 'true');
+    root.setAttribute('aria-label', 'Acervo Studio');
     root.innerHTML =
       '<div class="axs-top">' +
       '  <div class="axs-mode">' +
@@ -62,6 +65,23 @@
     if (qi) qi.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') acervoStudioSearch(qi.value);
     });
+    // a11y: Escape closes the dialog (but not while typing in a field — there
+    // Escape keeps its native meaning); Enter/Space activate a focused nav item.
+    root.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        var t = e.target;
+        var tag = t && t.tagName ? t.tagName.toLowerCase() : '';
+        if (tag !== 'input' && tag !== 'textarea' && tag !== 'select') {
+          e.preventDefault(); _close();
+        }
+        return;
+      }
+      if ((e.key === 'Enter' || e.key === ' ') && e.target && e.target.classList &&
+          (e.target.classList.contains('axs-ni') || e.target.classList.contains('axs-pi'))) {
+        e.preventDefault();
+        e.target.click();
+      }
+    });
     AXS.built = true;
   }
 
@@ -70,8 +90,12 @@
     var root = _root();
     root.hidden = false;
     AXS.open = true;
+    AXS._returnFocus = document.getElementById('axsLauncher');
     _showLauncher(false);
     if (typeof acervoStudioRenderNav === 'function') acervoStudioRenderNav();
+    // a11y: move focus into the dialog so keyboard users land inside it.
+    var q = root.querySelector('[data-axs="q"]');
+    if (q && typeof q.focus === 'function') q.focus();
   }
   async function _close() {
     if (AXS.dirty && !(await _confirmDiscard())) return;
@@ -81,6 +105,9 @@
     if (root) root.hidden = true;
     AXS.open = false;
     _showLauncher(true);
+    // a11y: return focus to the launcher that opened the dialog.
+    var rf = AXS._returnFocus || document.getElementById('axsLauncher');
+    if (rf && typeof rf.focus === 'function') rf.focus();
   }
 
   function _ensureLauncher() {
@@ -149,6 +176,8 @@
     });
     nav.innerHTML = html;
     nav.querySelectorAll('.axs-ni').forEach(function (el) {
+      el.setAttribute('role', 'button');
+      el.setAttribute('tabindex', '0');
       el.addEventListener('click', function () {
         acervoStudioSelectScope(el.getAttribute('data-scope'), '');
       });
@@ -210,22 +239,30 @@
       sub.insertBefore(cap, sub.firstChild);
     }
     sub.querySelectorAll('[data-mv]').forEach(function (el) {
+      el.setAttribute('role', 'button');
+      el.setAttribute('tabindex', '0');
       el.addEventListener('click', function () {
         acervoStudioSelectScope('micro', el.getAttribute('data-mv'));
       });
     });
     sub.querySelectorAll('[data-path]').forEach(function (el) {
+      el.setAttribute('role', 'button');
+      el.setAttribute('tabindex', '0');
       el.addEventListener('click', function () {
         if (typeof acervoStudioOpenPage === 'function')
           acervoStudioOpenPage(el.getAttribute('data-path'));
       });
     });
     sub.querySelectorAll('[data-intake]').forEach(function (el) {
+      el.setAttribute('role', 'button');
+      el.setAttribute('tabindex', '0');
       el.addEventListener('click', function () {
         acervoStudioOpenEnvelope(el.getAttribute('data-intake'));
       });
     });
     sub.querySelectorAll('[data-art]').forEach(function (el) {
+      el.setAttribute('role', 'button');
+      el.setAttribute('tabindex', '0');
       el.addEventListener('click', function () {
         if (el.getAttribute('data-artkind') === 'dir') {
           _openArtifact(el.getAttribute('data-art'), el.getAttribute('data-arttitle'));
@@ -1203,9 +1240,35 @@
     if (AXS.open && AXS.dirty) { e.preventDefault(); e.returnValue = ''; return ''; }
   });
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', _ensureLauncher);
-  } else {
+  // ── Phase 5: consolidate — retire/redirect the MOD-009 docked panel ──────
+  // The Studio reaches parity, so its entry points funnel to the Studio. We do
+  // NOT edit acervo-explorer.* (rebase-safety): we hide the MOD-009 body
+  // launcher and redirect its global toggle, preserving the original as an
+  // escape hatch. Idempotent; safe if MOD-009 is absent.
+  function _consolidateMod009() {
+    try {
+      // Redirect ONCE: the `!__acervoExplorerToggleLegacy` guard makes this
+      // idempotent — a second call must not re-wrap (which would overwrite the
+      // preserved original with our own wrapper and lose the escape hatch).
+      if (!window.__acervoExplorerToggleLegacy &&
+          typeof window.acervoExplorerToggle === 'function' &&
+          window.acervoExplorerToggle !== acervoStudioToggle) {
+        window.__acervoExplorerToggleLegacy = window.acervoExplorerToggle;
+        window.acervoExplorerToggle = function () { acervoStudioToggle(); };
+      }
+      var legacy = document.getElementById('axLauncher');
+      if (legacy) legacy.style.display = 'none';
+    } catch (e) { /* consolidation is best-effort */ }
+  }
+
+  function _bootstrap() {
     _ensureLauncher();
+    _consolidateMod009();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _bootstrap);
+  } else {
+    _bootstrap();
   }
 })();

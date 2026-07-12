@@ -165,3 +165,8 @@
 .axs-ask-srcs { margin-top: 8px; font-size: 12px; }
 .axs-ask-src { background: none; border: none; color: var(--axs-acct); cursor: pointer;
   text-decoration: underline; font: 400 12px/1.4 var(--axs-mono); padding: 0 2px; }
+
+/* Phase 5: a11y — visible keyboard focus for nav items */
+.axs-ni:focus-visible, .axs-pi:focus-visible {
+  outline: 2px solid var(--axs-acc); outline-offset: -2px; border-radius: 6px;
+}
