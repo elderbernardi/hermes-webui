@@ -1028,6 +1028,51 @@ def test_pub_publish_drive_unconfigured(acervo):
     assert out["ok"] is False and out["drive_unconfigured"] is True
 
 
+# ── Phase 3 whole-branch review fixes ────────────────────────────────────────
+
+@pytest.mark.parametrize("dt", ["exocortex/inbox", ["a", "b"], 5, None])
+def test_pub_prepare_tolerates_non_dict_drive_target(acervo, dt):
+    """review I1: a malformed-but-parseable manifest (drive_target not a dict)
+    must NOT 500 — prepare returns a calm result with the default target."""
+    d = _mk_artifact(acervo)
+    _mk_tools(acervo)
+    m = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
+    m["drive_target"] = dt
+    (d / "manifest.json").write_text(json.dumps(m, ensure_ascii=False),
+                                     encoding="utf-8")
+    out = studio_pub.prepare(acervo, "art_20260712_relatorio")
+    assert out["ok"] is True
+    assert out["artifact"]["drive_target"] == "exocortex/inbox"
+
+
+def test_pub_prepare_route_non_dict_drive_target_no_500(acervo, session_ok, jcap):
+    """review I1 at the route: no 500 leak (operational-state guarantee)."""
+    d = _mk_artifact(acervo)
+    _mk_tools(acervo)
+    m = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
+    m["drive_target"] = "exocortex/inbox"   # a string, not a dict
+    (d / "manifest.json").write_text(json.dumps(m, ensure_ascii=False),
+                                     encoding="utf-8")
+    h = _Handler("/api/acervo/x/publish/prepare")
+    studio.handle_studio_post(h, {"session_id": "sid1",
+                                  "artifact_id": "art_20260712_relatorio"})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is True
+
+
+def test_pub_publish_real_drive_failure_not_misread_as_unconfigured(acervo):
+    """review M1: a genuine Drive failure whose traceback merely mentions the
+    google_api.py filename must NOT be misclassified as drive_unconfigured."""
+    _mk_artifact(acervo)
+    _mk_tools(acervo, publish_rc=1, publish_stderr=
+              'Traceback (most recent call last):\n'
+              '  File ".../google_api.py", line 12, in build_service\n'
+              'RuntimeError: Drive quota exceeded\n')
+    out = studio_pub.publish(acervo, "art_20260712_relatorio")
+    assert out["ok"] is False
+    assert not out.get("drive_unconfigured")
+    assert "error" in out
+
+
 # ── Phase 3 Task 4: publish routes ───────────────────────────────────────────
 
 def test_publish_prepare_route_happy(acervo, session_ok, jcap):

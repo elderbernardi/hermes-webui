@@ -27,7 +27,11 @@ logger = logging.getLogger("acervo_studio_publish")
 _VALIDATOR_TIMEOUT = 60
 _PUBLISH_TIMEOUT = 300          # a Drive upload can be slow
 _ART_ID_MAX = 128
-_DRIVE_MISSING_MARKER = "google_api.py"
+# Match the publish tool's SPECIFIC "driver not found" message, not the bare
+# filename — a genuine Drive failure (quota/auth) raises an Exception whose
+# traceback frames also mention google_api.py, which must NOT be misread as
+# "Drive não configurado".
+_DRIVE_MISSING_MARKER = "google_api.py não encontrado"
 _VISIBILITIES = ("private", "public")
 
 _PUBLIC_GATE_MESSAGE = (
@@ -135,9 +139,10 @@ def _run_validator(tools_dir, root, artifact_dir):
 
 def _run_publish(tools_dir, root, artifact_dir):
     """artifact_publish.py publish --artifact-dir … → parsed receipt dict.
-    Raises DriveNotConfigured when the Drive driver is missing (the tool's
-    own failure receipt receipts/receipt.google_drive.failed.json still gets
-    written by the tool), PublishError on any other failure."""
+    Raises DriveNotConfigured when the Drive driver is missing (that path
+    raises SystemExit inside the tool BEFORE any upload, so no failure receipt
+    is written for it), PublishError on any other failure (those do write the
+    tool's receipts/receipt.google_drive.failed.json)."""
     script = os.path.join(tools_dir, "artifact_publish.py")
     try:
         p = _run_tool([sys.executable or "python3", script, "publish",
@@ -195,14 +200,15 @@ def prepare(root, art_id):
     except PublishError as e:
         return {"ok": False, "error": str(e)}
     exports = manifest.get("exports") or []
+    dt = manifest.get("drive_target")
+    folder = dt.get("folder_path") if isinstance(dt, dict) else None
     return {
         "ok": True,
         "artifact": {
             "id": str(art_id),
             "title": str(manifest.get("title", "") or art_id),
             "status": str(manifest.get("status", "") or "draft"),
-            "drive_target": str(((manifest.get("drive_target") or {})
-                                 .get("folder_path")) or "exocortex/inbox"),
+            "drive_target": str(folder or "exocortex/inbox"),
             "exports_count": len(exports) if isinstance(exports, list) else 0,
         },
         "gate": gate,
