@@ -754,7 +754,7 @@
     } catch (e) {
       // operational states come back as 200 {ok:false,...}; a throw here is a
       // malformed request or network error.
-      pc.innerHTML = '<div class="axs-env-note">Falha na triagem' + _detail(e) + '</div>';
+      pc.innerHTML = '<div class="axs-env-note">' + _esc('Falha na triagem' + _detail(e)) + '</div>';
       return;
     }
     if (r && r.ok && r.proposal) _renderProposal(pc, iid, r.proposal);

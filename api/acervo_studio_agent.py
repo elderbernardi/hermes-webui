@@ -84,21 +84,20 @@ def _resolve_main_runtime(session=None):
 def _run_agent_text(system_prompt, user_prompt, *, session=None, enabled_toolsets=()):
     """Run one blocking in-process agent turn, return final_response text.
     enabled_toolsets=() => tool-less (triage/assist). A non-empty toolset lets the
-    turn execute tools (promote). Raises AgentUnavailable if the runtime is absent."""
-    from api import profiles as profiles_api
+    turn execute tools (promote). Raises AgentUnavailable for ANY runtime problem
+    (missing agent, provider/profile resolution failure, turn error) so callers can
+    surface a calm offline state instead of a 500."""
+    try:
+        from api import profiles as profiles_api
 
-    active_profile = profiles_api.get_active_profile_name() or "default"
-    with profiles_api.profile_env_for_background_worker(
-            active_profile, "acervo studio agent", logger_override=logger):
-        rt = _resolve_main_runtime(session)
-        try:
+        active_profile = profiles_api.get_active_profile_name() or "default"
+        with profiles_api.profile_env_for_background_worker(
+                active_profile, "acervo studio agent", logger_override=logger):
+            rt = _resolve_main_runtime(session)
             from run_agent import AIAgent
-        except ImportError as e:
-            raise AgentUnavailable(str(e))
-        if AIAgent is None:
-            raise AgentUnavailable("AIAgent unavailable")
-        sid = "acervo-studio-%s" % uuid.uuid4().hex[:8]
-        try:
+            if AIAgent is None:
+                raise AgentUnavailable("AIAgent unavailable")
+            sid = "acervo-studio-%s" % uuid.uuid4().hex[:8]
             agent = AIAgent(
                 model=rt["model"], provider=rt["provider"], base_url=rt["base_url"],
                 api_key=rt["api_key"], platform="webui", quiet_mode=True,
@@ -106,11 +105,11 @@ def _run_agent_text(system_prompt, user_prompt, *, session=None, enabled_toolset
             result = agent.run_conversation(
                 user_message=user_prompt, system_message=system_prompt,
                 conversation_history=[], task_id=sid)
-        except AgentUnavailable:
-            raise
-        except Exception as e:
-            raise AgentUnavailable(str(e))
-        return str((result or {}).get("final_response") or "").strip()
+            return str((result or {}).get("final_response") or "").strip()
+    except AgentUnavailable:
+        raise
+    except Exception as e:
+        raise AgentUnavailable(str(e))
 
 
 def _extract_json(text):
@@ -410,13 +409,26 @@ def promote(root, iid, routing, *, session=None):
     tags = [re.sub(r"[^a-z0-9-]+", "-", str(t).strip().lower()).strip("-")
             for t in raw_tags][:8]
     tags = [t for t in tags if t]
+    micro_dir = root / "micro" / slug
+    existed = micro_dir.exists()
     try:
         _scaffold_microverso(root, slug)
         receipt = _commit_via_acervoctl(root, slug, nature, title, body_md,
                                         class_name, description, tags)
-    except PromoteError as e:
+    except (PromoteError, OSError) as e:
+        # A failed promote must not leave a new, empty microverso skeleton behind.
+        if not existed:
+            try:
+                shutil.rmtree(micro_dir)
+            except OSError:
+                pass
         return {"ok": False, "error": str(e)}
-    _move_to_promoted(root, iid)
+    # The page is committed — the write succeeded. Moving the envelope to
+    # promoted/ is best-effort: a move failure must not 500 or discard the write.
+    try:
+        _move_to_promoted(root, iid)
+    except OSError as e:
+        logger.warning("promote: envelope move to promoted/ failed after commit: %s", e)
     return {"ok": True,
             "created_path": receipt.get("relative_output") or receipt.get("target_path"),
             "receipt": receipt}

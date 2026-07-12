@@ -756,3 +756,29 @@ def test_promote_scaffolds_microverso_meta(acervo, monkeypatch):
     studio_agent._scaffold_microverso(acervo, "brandnew")
     assert (acervo / "micro" / "brandnew" / "_meta" / "index.md").read_text().startswith("# Index")
     assert (acervo / "micro" / "brandnew" / "_meta" / "log.md").read_text().startswith("# Log")
+
+
+# ── Phase 2b review fixes: promote write-boundary + session gate ────────────
+
+@pytest.mark.parametrize("bad_slug", ["../evil", "_meta", ".quarantine", "a/b", ""])
+def test_promote_rejects_bad_slug(acervo, session_ok, jcap, monkeypatch, bad_slug):
+    """The module's own write-boundary guard: a bad slug is rejected BEFORE any
+    agent turn or write, and the envelope is not moved."""
+    m = _mk_env(acervo)
+    monkeypatch.setattr(routes, "get_session", lambda sid: None, raising=False)
+    # if the guard is bypassed the agent would be called — make that loud
+    monkeypatch.setattr(studio_agent, "_run_agent_text",
+                        lambda sp, up, **k: (_ for _ in ()).throw(AssertionError("guard bypassed")))
+    h = _Handler("/api/acervo/x/intake/item/promote")
+    studio.handle_studio_post(h, {"session_id": "sid1", "id": m["intake_id"],
+                                  "routing": _routing(slug=bad_slug)})
+    assert jcap["status"] == 200 and jcap["obj"]["ok"] is False
+    assert (acervo / "_inbox" / "incoming" / m["intake_id"]).is_dir()  # not moved
+
+
+def test_promote_requires_session(acervo, jcap, monkeypatch):
+    monkeypatch.setattr(routes, "_resolve_session_workspace", lambda sid: None)
+    h = _Handler("/api/acervo/x/intake/item/promote")
+    studio.handle_studio_post(h, {"session_id": "ghost", "id": "int_20990101_000000_x",
+                                  "routing": _routing()})
+    assert jcap["status"] in (400, 404)
