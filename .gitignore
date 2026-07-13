@@ -52,6 +52,10 @@ docs/*
 !docs/rfcs/**
 !docs/architecture/
 !docs/architecture/**
+!docs/acervo-studio/
+!docs/acervo-studio/**
+!docs/hw1/
+!docs/hw1/**
 
 # Local-only AI assistant context — never committed even under docs/.
 docs/AGENTS.md
@@ -76,3 +80,5 @@ graphify-out/
 node_modules/
 package-lock.json
 docs/ui-ux/review-shots/
+
+.worktrees/
