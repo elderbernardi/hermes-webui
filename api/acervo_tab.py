@@ -710,41 +710,45 @@ def _handle_inbox_move(handler, body):
 
 def handle_acervo_get(handler, parsed):
     """GET dispatcher for the Acervo tab (MOD-007/008), the MOD-008 inbox and
-    the /x/ prefix (MOD-009/010 Explorer/Studio). True when handled."""
+    the /x/ prefix (MOD-009/010 Explorer/Studio). Returns True when the path was
+    handled (the handler already emitted the HTTP response and returns None),
+    False otherwise — the routes.py caller uses this to stop dispatch. Returning
+    the handler's own None here would let routes.py fall through to its 404 and
+    emit a SECOND response on the connection (keep-alive desync)."""
     p = parsed.path
     if p == "/api/artifact/zip":
-        return _handle_artifact_zip(handler, parsed)
+        _handle_artifact_zip(handler, parsed); return True
     if p == "/api/acervo/artifacts":
-        return _handle_acervo_artifacts(handler, parsed)
+        _handle_acervo_artifacts(handler, parsed); return True
     if p == "/api/acervo/microverses":
-        return _handle_acervo_microverses(handler, parsed)
+        _handle_acervo_microverses(handler, parsed); return True
     if p == "/api/acervo/knowledge":
-        return _handle_acervo_knowledge(handler, parsed)
+        _handle_acervo_knowledge(handler, parsed); return True
     if p == "/api/acervo/titles":
-        return _handle_acervo_titles(handler, parsed)
+        _handle_acervo_titles(handler, parsed); return True
     if p == "/api/artifact/receipt":
-        return _handle_artifact_receipt(handler, parsed)
+        _handle_artifact_receipt(handler, parsed); return True
     if p == "/api/inbox/status":
-        return _handle_inbox_status(handler, parsed)
+        _handle_inbox_status(handler, parsed); return True
     if p.startswith("/api/acervo/x/"):
         import api.acervo_explorer as ax
-        return ax.handle_acervo_x_get(handler, parsed)
+        ax.handle_acervo_x_get(handler, parsed); return True
     return False
 
 
 def handle_acervo_post(handler, path, body):
-    """POST dispatcher (mirror of handle_acervo_get)."""
+    """POST dispatcher (mirror of handle_acervo_get — return True on any match)."""
     if path == "/api/artifact/publish":
-        return _handle_artifact_publish(handler, body)
+        _handle_artifact_publish(handler, body); return True
     if path == "/api/acervo/status":
-        return _handle_acervo_status(handler, body)
+        _handle_acervo_status(handler, body); return True
     if path == "/api/acervo/stage-context":
-        return _handle_acervo_stage_context(handler, body)
+        _handle_acervo_stage_context(handler, body); return True
     if path == "/api/inbox/move":
-        return _handle_inbox_move(handler, body)
+        _handle_inbox_move(handler, body); return True
     if path.startswith("/api/acervo/x/"):
         import api.acervo_explorer as ax
-        return ax.handle_acervo_x_post(handler, body)
+        ax.handle_acervo_x_post(handler, body); return True
     return False
 
 
