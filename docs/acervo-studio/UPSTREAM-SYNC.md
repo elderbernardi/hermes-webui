@@ -73,3 +73,25 @@ the owner-gated go-live steps in `docs/acervo-studio/GO-LIVE-CHECKLIST.md`
 (`EXOCORTEX_SCRIPTS_DIR` for promote, Drive creds for publish, provider creds for
 assist/ask, then reprovision). Until then the Studio degrades calmly (agent-dependent
 features show a calm offline state; browse/read/edit/capture keep working).
+
+
+---
+
+## HW-1 re-founding checkpoint (2026-07-14) — THIS SUPERSEDES THE ABOVE BASE INFO
+
+Strategy C executed: the whole customization layer was re-founded onto
+`upstream/master` @ `exp-v0.52.61` (`d486394f`). Old lineage: tag `pre-refound-2026-07-13`.
+
+What changed for future syncs:
+- **MOD-007/008 backend now lives in `api/acervo_tab.py`** (no longer inline in
+  routes.py). routes.py's acervo surface ≈ 30 lines (2 dispatch delegations + a
+  re-export block). The re-export block is the ONLY seam the fork-owned modules
+  depend on inside routes.py.
+- **Dispatcher contract:** `handle_acervo_get/post` must return **True on match**
+  (handlers return None; forwarding that None causes a double HTTP response —
+  see the HW-1 record in EXOCRTX_MODIFICATIONS.md).
+- v0.52 absorbed the fork's old security cherry-picks (credential-scrub, TLS accept,
+  CORS, terminal gate) — do not re-apply them on the next sync.
+- v0.52 added per-locale coverage tests + literal-marker source-slicing tests; any new
+  fork en-locale key must be added to ALL locales, and upstream literal anchors
+  (e.g. `let _workspacePanelActiveTab = 'files';`) must be preserved verbatim.
