@@ -2314,6 +2314,9 @@ async function loadSession(sid){
   }
 
   if(typeof renderSessionArtifacts==='function') renderSessionArtifacts();
+  // MOD-008: refresh whichever workspace tab is active (Sessão/Acervo/Todos) so it
+  // reflects the newly loaded chat, not the previous one.
+  if(typeof _refreshActiveWorkspaceTab==='function') _refreshActiveWorkspaceTab();
 
   // ── Cross-channel handoff hint ──
   // After session fully loaded, check if this is a messaging session with

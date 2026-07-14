@@ -318,7 +318,7 @@ async function authorizeWorkspaceEscapeNavigation(item){
   }
 }
 
-let _workspacePanelActiveTab = 'files';
+let _workspacePanelActiveTab = 'artifacts';  // MOD-008: default to the Sessão view, not the raw tree
 let _renderSessionArtifactsTimer = null;
 let _workspaceTodosLastRenderedHash = null;
 
@@ -370,11 +370,12 @@ if(typeof document !== 'undefined'){
 }
 
 function switchWorkspacePanelTab(tab){
-  _workspacePanelActiveTab = tab === 'artifacts' ? 'artifacts' : tab === 'todos' ? 'todos' : 'files';
+  _workspacePanelActiveTab = tab === 'artifacts' ? 'artifacts' : tab === 'todos' ? 'todos' : tab === 'acervo' ? 'acervo' : 'files';
   _setWorkspacePanelTabDataset();
   const filesTab = $('workspaceFilesTab');
   const artifactsTab = $('workspaceArtifactsTab');
   const todosTab = $('workspaceTodosTab');
+  const acervoTab = $('workspaceAcervoTab');
   if(filesTab){
     filesTab.classList.toggle('active', _workspacePanelActiveTab === 'files');
     filesTab.setAttribute('aria-selected', _workspacePanelActiveTab === 'files' ? 'true' : 'false');
@@ -387,12 +388,41 @@ function switchWorkspacePanelTab(tab){
     todosTab.classList.toggle('active', _workspacePanelActiveTab === 'todos');
     todosTab.setAttribute('aria-selected', _workspacePanelActiveTab === 'todos' ? 'true' : 'false');
   }
+  if(acervoTab){
+    acervoTab.classList.toggle('active', _workspacePanelActiveTab === 'acervo');
+    acervoTab.setAttribute('aria-selected', _workspacePanelActiveTab === 'acervo' ? 'true' : 'false');
+  }
   const artifacts = $('workspaceArtifacts');
   if(artifacts) artifacts.hidden = _workspacePanelActiveTab !== 'artifacts';
   const todosPanel = $('workspaceTodosPanel');
   if(todosPanel) todosPanel.hidden = _workspacePanelActiveTab !== 'todos';
+  const acervoPanel = $('workspaceAcervo');
+  if(acervoPanel) acervoPanel.hidden = _workspacePanelActiveTab !== 'acervo';
   if(_workspacePanelActiveTab === 'artifacts') renderSessionArtifacts();
   if(_workspacePanelActiveTab === 'todos') _loadWorkspacePanelTodos();
+  if(_workspacePanelActiveTab === 'acervo' && typeof renderAcervo === 'function') renderAcervo(false);
+}
+
+// Re-render whichever workspace tab is active. Called on session switch so the
+// view never shows the previous chat's data (MOD-008 bug fix). 'files' is already
+// refreshed by loadDir('.').
+// MOD-008: the raw file tree is reached from the left-rail "Arquivos" icon, not a
+// workspace tab. Ensure the chat view (host of the right panel) is shown, then
+// switch the right panel to the Files view.
+function openFilesBrowser(){
+  if(typeof switchPanel === 'function') switchPanel('chat');
+  switchWorkspacePanelTab('files');
+}
+
+function _refreshActiveWorkspaceTab(){
+  if(_workspacePanelActiveTab === 'artifacts'){
+    if(typeof renderSessionArtifacts === 'function') renderSessionArtifacts();
+  }else if(_workspacePanelActiveTab === 'acervo'){
+    if(typeof resetAcervoForSession === 'function') resetAcervoForSession();
+    if(typeof renderAcervo === 'function') renderAcervo(false);
+  }else if(_workspacePanelActiveTab === 'todos'){
+    if(typeof _loadWorkspacePanelTodos === 'function') _loadWorkspacePanelTodos();
+  }
 }
 
 function _loadWorkspacePanelTodos(){
@@ -586,7 +616,25 @@ function renderSessionArtifacts(){
     if(normWs && p.startsWith(normWs)) return p.slice(normWs.length);
     return p;
   };
-  root.innerHTML = items.map(item => `<button type="button" class="workspace-artifact-item" data-artifact-path="${esc(item.path)}" onclick="openArtifactPath(this.dataset.artifactPath)"><div class="workspace-artifact-path">${esc(displayPath(item.path))}</div><div class="workspace-artifact-meta">${esc(item.source || 'session')}</div></button>`).join('');
+  // Friendly name (manifest/frontmatter title → humanized filename); raw path kept
+  // as a muted secondary line so the real file is always visible (MOD-008).
+  const fname = (p) => (typeof friendlyName === 'function') ? friendlyName(p) : displayPath(p);
+  const row = (item) => {
+    const rel = displayPath(item.path);
+    const title = fname(item.path);
+    const showPath = title !== rel;
+    return `<button type="button" class="workspace-artifact-item" data-artifact-path="${esc(item.path)}" onclick="openArtifactPath(this.dataset.artifactPath)">`
+      + `<div class="workspace-artifact-name">${esc(title)}</div>`
+      + (showPath ? `<div class="workspace-artifact-path">${esc(rel)}</div>` : '')
+      + `<div class="workspace-artifact-meta">${esc(item.source || 'session')}</div>`
+      + `</button>`;
+  };
+  root.innerHTML = items.map(row).join('');
+  // Resolve frontmatter titles for .md items in the background, then re-render once.
+  if(typeof prefetchTitles === 'function'){
+    const mdPaths = items.map(i => i.path).filter(p => /\.md$/i.test(p));
+    if(mdPaths.length) prefetchTitles(mdPaths, () => { root.innerHTML = items.map(row).join(''); });
+  }
 }
 
 async function _workspacePathExists(path){
@@ -1330,10 +1378,27 @@ async function uploadToWorkspace(file, dir) {
       showToast(msg, 5000, 'error');
     } else {
       showToast(t('uploaded') || ('Uploaded ' + (data.filename || file.name)), 2000);
+      // Uploading into the inbox pre-fills the composer so the agent is told
+      // a file arrived — editable, never auto-sent. #79
+      if (typeof _isInboxPath === 'function' && _isInboxPath(dir)) {
+        _prefillInboxPrompt(data.filename || file.name);
+      }
     }
   } catch (e) {
     showToast(t('upload_failed') || ('Upload failed: ' + e.message), 5000, 'error');
   }
+}
+
+function _prefillInboxPrompt(filename) {
+  const ta = document.getElementById('msg');
+  if (!ta) return;
+  const text = t('inbox_prefill_prompt').replace('{file}', filename);
+  ta.value = (ta.value && ta.value.trim()) ? (ta.value.replace(/\s+$/, '') + '\n' + text) : text;
+  // Fire input so the composer auto-resizes and enables the send button.
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+  ta.focus();
+  try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (_) {}
+  showToast(t('inbox_prefill_toast'));
 }
 
 function _isOsFilesDrag(e) {

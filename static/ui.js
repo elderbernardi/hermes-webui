@@ -5,7 +5,7 @@
 // legacy reverse-scan over S.messages — that keeps new clients working
 // against old servers (Phase 1 may not yet be deployed everywhere).
 // See api/todo_state.py for the wire contract.
-const S={session:null,messages:[],entries:[],busy:false,pendingFiles:[],toolCalls:[],activeStreamId:null,currentDir:'.',activeProfile:'default',activeProfileIsDefault:true,showHiddenWorkspaceFiles:false,todos:[],todoStateMeta:null,_pendingSessionToolsets:null};
+const S={session:null,messages:[],entries:[],busy:false,pendingFiles:[],pendingContextAttachments:[],toolCalls:[],activeStreamId:null,currentDir:'.',activeProfile:'default',activeProfileIsDefault:true,showHiddenWorkspaceFiles:false,todos:[],todoStateMeta:null,_pendingSessionToolsets:null};
 
 function assistantDisplayName(){
   if(S.activeProfile&&S.activeProfile!=='default') return S.activeProfile.charAt(0).toUpperCase()+S.activeProfile.slice(1);
@@ -18883,6 +18883,7 @@ function renderFileTree(){
   _renderTreeItems(box, visibleEntries, 0);
   // #5657: restore the pre-wipe scroll position now that the tree is tall again.
   if(box) box.scrollTop=prevScrollTop;
+  _refreshInboxBadge();
 }
 
 let _wsActiveDragPath=null;
@@ -19185,6 +19186,29 @@ function _renderTreeItems(container, entries, depth){
     };
     el.appendChild(nameEl);
 
+    // Inbox dir gets a numeric badge of files waiting. #78
+    if(item.type==='dir' && String(item.path||'').replace(/^\/+/,'')==='_inbox'){
+      const ib=document.createElement('span');
+      ib.className='inbox-badge';
+      const c=S._inboxCount||0;
+      ib.textContent=c>0?String(c):'';
+      ib.title=t('inbox_badge_tip').replace('{n}',String(c));
+      ib.style.cssText='margin-left:6px;font-size:11px;background:var(--accent,#3b8af0);color:#fff;border-radius:10px;padding:0 6px;min-width:16px;text-align:center;line-height:16px;'+(c>0?'':'display:none;');
+      el.appendChild(ib);
+    }
+
+    // Artifact status badge from manifest.json (#81)
+    if(item.artifact_status){
+      const _aColors={draft:'#8f8a91',ready:'#1376ed',published:'#22c55e',failed:'#ef4444'};
+      const ac=_aColors[item.artifact_status]||'#8f8a91';
+      const ab=document.createElement('span');
+      ab.className='artifact-badge';
+      ab.textContent=item.artifact_status;
+      if(item.artifact_title)ab.title=item.artifact_title;
+      ab.style.cssText='margin-left:6px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;background:'+ac+';color:#fff;border-radius:4px;padding:1px 5px;line-height:15px;';
+      el.appendChild(ab);
+    }
+
     // Size -- for real files and symlinks that resolve to files
     if(isFileLike&&item.size){
       const sizeEl=document.createElement('span');
@@ -19293,6 +19317,74 @@ async function deleteWorkspaceDir(relPath, name){
     delete S._dirCache[relPath];
     await loadDir(S.currentDir);
   }catch(e){setStatus(t('delete_failed')+e.message);}
+}
+
+function _isInboxPath(p){
+  const n=String(p||'').replace(/^\/+/,'');
+  return n==='_inbox' || n.startsWith('_inbox/');
+}
+
+// Refresh the numeric inbox badge from the backend count. Non-blocking; bails
+// if the session changed mid-flight. #78
+async function _refreshInboxBadge(){
+  if(!S.session){S._inboxCount=0;return;}
+  const sessionId=S.session.session_id;
+  try{
+    const r=await api('/api/inbox/status?session_id='+encodeURIComponent(sessionId));
+    if(!S.session||S.session.session_id!==sessionId)return;
+    S._inboxCount=(r&&typeof r.count==='number')?r.count:0;
+  }catch(_){S._inboxCount=0;}
+  document.querySelectorAll('.inbox-badge').forEach(b=>{
+    const c=S._inboxCount||0;
+    b.textContent=c>0?String(c):'';
+    b.style.display=c>0?'':'none';
+    b.title=t('inbox_badge_tip').replace('{n}',String(c));
+  });
+}
+
+// Move an inbox file to a destination folder (microverso). Destinations are the
+// workspace's top-level dirs plus one level of micro/*. Always confirms; never
+// moves automatically. #78
+async function _promptInboxMove(item){
+  if(!S.session)return;
+  const sessionId=S.session.session_id;
+  let dests=[];
+  try{
+    const root=await api('/api/list?session_id='+encodeURIComponent(sessionId)+'&path=.');
+    dests=(root.entries||[]).filter(e=>e.type==='dir'&&e.name!=='_inbox').map(e=>e.path);
+    if(dests.includes('micro')){
+      try{
+        const m=await api('/api/list?session_id='+encodeURIComponent(sessionId)+'&path='+encodeURIComponent('micro'));
+        (m.entries||[]).filter(e=>e.type==='dir').forEach(e=>dests.push(e.path));
+      }catch(_){}
+    }
+  }catch(err){showToast(t('inbox_move_failed')+(err.message||err));return;}
+  if(!dests.length){showToast(t('inbox_no_dest'));return;}
+  document.querySelectorAll('.file-ctx-menu').forEach(el=>el.remove());
+  const menu=document.createElement('div');
+  menu.className='file-ctx-menu';
+  menu.style.cssText='position:fixed;left:50%;top:25%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:6px 0;z-index:10000;min-width:220px;max-height:55vh;overflow:auto;box-shadow:0 4px 16px rgba(0,0,0,.35);';
+  const title=document.createElement('div');
+  title.textContent=t('inbox_move_pick')+': '+item.name;
+  title.style.cssText='padding:7px 14px;font-size:12px;color:var(--text-dim,#999);';
+  menu.appendChild(title);
+  for(const d of dests){
+    menu.appendChild(_workspaceContextMenuItem(d,async()=>{
+      menu.remove();
+      const ok=await showConfirmDialog({title:t('inbox_move_confirm').replace('{file}',item.name).replace('{dest}',d),message:'',confirmLabel:t('inbox_move_to'),focusCancel:true});
+      if(!ok)return;
+      try{
+        await api('/api/inbox/move',{method:'POST',body:JSON.stringify({session_id:sessionId,path:item.path,dest_dir:d})});
+        showToast(t('inbox_moved').replace('{dest}',d));
+        if(S._dirCache){delete S._dirCache['_inbox'];delete S._dirCache[d];}
+        await loadDir(S.currentDir);
+        _refreshInboxBadge();
+      }catch(err){showToast(t('inbox_move_failed')+(err.message||err));}
+    }));
+  }
+  document.body.appendChild(menu);
+  const close=(ev)=>{if(!menu.contains(ev.target)){menu.remove();document.removeEventListener('mousedown',close);}};
+  setTimeout(()=>document.addEventListener('mousedown',close),0);
 }
 
 function _showFileContextMenu(e, item){
@@ -19416,6 +19508,72 @@ function _showFileContextMenu(e, item){
       window.location.href=url;
     };
     menu.appendChild(dlItem);
+
+    // Artifact dirs get a deliverable-only ZIP (source/+exports/+manifest). #84
+    if(/^_artifacts\/items\/[^/]+$/.test(String(item.path||'').replace(/^\/+/,''))){
+      const azItem=document.createElement('div');
+      azItem.textContent=t('artifact_zip_download');
+      azItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
+      azItem.onmouseenter=()=>azItem.style.background='var(--hover-bg)';
+      azItem.onmouseleave=()=>azItem.style.background='';
+      azItem.onclick=()=>{
+        menu.remove();
+        const id=String(item.path).replace(/^\/+/,'').split('/').pop();
+        window.location.href='/api/artifact/zip?session_id='+encodeURIComponent(S.session.session_id)+'&id='+encodeURIComponent(id);
+      };
+      menu.appendChild(azItem);
+
+      // Publish to Drive (explicit, user-triggered). #82
+      const _artId=String(item.path).replace(/^\/+/,'').split('/').pop();
+      const pubItem=document.createElement('div');
+      pubItem.textContent=t('artifact_publish');
+      pubItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
+      pubItem.onmouseenter=()=>pubItem.style.background='var(--hover-bg)';
+      pubItem.onmouseleave=()=>pubItem.style.background='';
+      pubItem.onclick=async()=>{
+        menu.remove();
+        showToast(t('artifact_publishing'),60000);
+        try{
+          const r=await api('/api/artifact/publish',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,artifact_id:_artId})});
+          const link=(r&&r.drive_link)||'';
+          showToast(t('artifact_published')+(link?' — '+link:''),6000);
+          if(link)window.open(link,'_blank','noopener');
+          if(S._dirCache)delete S._dirCache['_artifacts/items'];
+          loadDir(S.currentDir);
+        }catch(err){showToast(t('artifact_publish_failed')+(err.message||err),6000,'error');}
+      };
+      menu.appendChild(pubItem);
+
+      if(item.artifact_status==='published'){
+        const openItem=document.createElement('div');
+        openItem.textContent=t('artifact_open_drive');
+        openItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
+        openItem.onmouseenter=()=>openItem.style.background='var(--hover-bg)';
+        openItem.onmouseleave=()=>openItem.style.background='';
+        openItem.onclick=async()=>{
+          menu.remove();
+          try{
+            const r=await api('/api/artifact/receipt?session_id='+encodeURIComponent(S.session.session_id)+'&id='+encodeURIComponent(_artId));
+            const rc=(r&&r.receipt)||{};
+            const link=rc.folder_link||rc.web_view_link||((rc.files||[])[0]||{}).webViewLink||'';
+            if(link)window.open(link,'_blank','noopener');
+            else showToast(t('artifact_no_receipt'),4000);
+          }catch(err){showToast(t('artifact_no_receipt'),4000);}
+        };
+        menu.appendChild(openItem);
+      }
+    }
+  }
+
+  // Inbox-only: move file out to a microverso. Explicit confirmation. #78
+  if(item.type!=='dir' && _isInboxPath(item.path)){
+    const mvItem=document.createElement('div');
+    mvItem.textContent=t('inbox_move_to');
+    mvItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
+    mvItem.onmouseenter=()=>mvItem.style.background='var(--hover-bg)';
+    mvItem.onmouseleave=()=>mvItem.style.background='';
+    mvItem.onclick=()=>{menu.remove();_promptInboxMove(item);};
+    menu.appendChild(mvItem);
   }
 
   if(!isReadOnlyEscape){
@@ -19600,6 +19758,22 @@ function renderTray(){ // non-media files use paperclip chip
     };
     tray.appendChild(chip);
   });
+}
+// MOD-008: chips for acervo items staged via "Adicionar ao contexto". Rendered in
+// a tray sibling to #attachTray; sent as attachments with the next message.
+function renderStagedContextChips(){
+  const tray=$('ctxTray'); if(!tray) return;
+  const items=Array.isArray(S.pendingContextAttachments)?S.pendingContextAttachments:[];
+  tray.innerHTML='';
+  if(!items.length){ tray.hidden=true; if(typeof updateSendBtn==='function')updateSendBtn(); return; }
+  tray.hidden=false;
+  items.forEach((a,i)=>{
+    const chip=document.createElement('div');chip.className='attach-chip ctx-chip';
+    chip.innerHTML=`<span class="ctx-chip-ico">📎</span> ${esc(a.name||'context')} <button title="${typeof t==='function'?t('remove_title'):'Remove'}">${typeof li==='function'?li('x',12):'×'}</button>`;
+    chip.querySelector('button').onclick=()=>{ S.pendingContextAttachments.splice(i,1); renderStagedContextChips(); };
+    tray.appendChild(chip);
+  });
+  if(typeof updateSendBtn==='function')updateSendBtn();
 }
 function _uploadTooLargeMessage(file){
   const fileSizeMb=Math.ceil(((file&&file.size)||0)/1024/1024);
