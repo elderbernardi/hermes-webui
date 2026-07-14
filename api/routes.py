@@ -13103,6 +13103,11 @@ def handle_get(handler, parsed) -> bool:
     if parsed.path == "/api/folder/download":
         return _handle_folder_download(handler, parsed)
 
+    # EXCRTX MOD-007..010 — Acervo tab/explorer/studio + inbox (api/acervo_tab.py)
+    from api.acervo_tab import handle_acervo_get as _acervo_get
+    if _acervo_get(handler, parsed):
+        return True
+
     if parsed.path == "/api/file":
         return _handle_file_read(handler, parsed)
 
@@ -15052,6 +15057,11 @@ def handle_post(handler, parsed) -> bool:
     if parsed.path == "/api/file/move":
         return _handle_file_move(handler, body)
 
+    # EXCRTX MOD-007..010 — Acervo (api/acervo_tab.py)
+    from api.acervo_tab import handle_acervo_post as _acervo_post
+    if _acervo_post(handler, parsed.path, body):
+        return True
+
     if parsed.path == "/api/file/create-dir":
         return _handle_create_dir(handler, body)
 
@@ -16519,6 +16529,50 @@ def _handle_sessions_search(handler, parsed):
     })
 
 
+def _enrich_artifact_entries(workspace, entries):
+    """Attach manifest status/title to artifact dirs under _artifacts/items/ (#81).
+
+    Mutates ``entries`` in place: each directory entry that has a readable
+    ``manifest.json`` gets ``artifact_status`` and ``artifact_title`` keys.
+    Unreadable or malformed manifests are skipped silently.
+    """
+    for e in entries:
+        if e.get("type") != "dir":
+            continue
+        try:
+            mf = safe_resolve_ws(workspace, e["path"] + "/manifest.json")
+            if not mf.is_file():
+                continue
+            data = json.loads(mf.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        st = data.get("status")
+        if isinstance(st, str):
+            e["artifact_status"] = st
+        title = data.get("title")
+        if isinstance(title, str):
+            e["artifact_title"] = title
+
+
+def _resolve_session_workspace(sid):
+    """Resolve a session id to its workspace path, falling back to CLI sessions.
+
+    Returns the workspace string, or None when the session is unknown.
+    """
+    try:
+        return get_session(sid).workspace
+    except KeyError:
+        try:
+            for cs in get_cli_sessions():
+                if cs["session_id"] == sid:
+                    return cs.get("workspace", "") or None
+        except Exception:
+            return None
+    return None
+
+
 def _handle_list_dir(handler, parsed):
     qs = parse_qs(parsed.query)
     sid = qs.get("session_id", [""])[0]
@@ -16543,6 +16597,12 @@ def _handle_list_dir(handler, parsed):
     try:
         rel_path = qs.get("path", ["."])[0]
         entries = list_dir(Path(workspace), rel_path)
+        # Inbox is an intake zone: surface newest-arrived files first (#78).
+        if rel_path.strip("/").split("/")[0] == "_inbox":
+            entries = sorted(entries, key=lambda e: e.get("mtime_ns") or 0, reverse=True)
+        # Artifact items carry manifest status/title for tree badges (#81).
+        if rel_path.strip("/") == "_artifacts/items":
+            _enrich_artifact_entries(Path(workspace), entries)
         return j(
             handler,
             {
@@ -22780,7 +22840,13 @@ def _handle_file_save(handler, body):
         with os.fdopen(fd, "wb", closefd=True) as fh:
             fh.write(data)
         return j(
-            handler, {"ok": True, "path": body["path"], "size": len(data)}
+            handler,
+            {
+                "ok": True,
+                "path": body["path"],
+                "size": len(data),
+                "sha256": __import__("hashlib").sha256(data).hexdigest(),
+            }
         )
     except (ValueError, FileNotFoundError, PermissionError, OSError) as e:
         return bad(handler, _sanitize_error(e))
@@ -26133,3 +26199,11 @@ def _handle_mcp_server_update(handler, name, body):
     _save_yaml_config_file(_get_config_path(), cfg)
     reload_config()
     return j(handler, {"ok": True, "server": _server_summary(name, server_cfg)})
+
+
+# EXCRTX re-exports (HW-1) — fork-owned acervo modules reference these via api.routes
+from api.acervo_tab import (  # noqa: E402,F401
+    _ACERVO_NATURES, _ACERVO_UI_STATUSES, _acervo_root,
+    _read_frontmatter_meta, _read_frontmatter_title, _humanize_slug,
+    _handle_acervo_status, _handle_acervo_stage_context,
+)
