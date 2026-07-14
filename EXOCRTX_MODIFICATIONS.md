@@ -6,7 +6,7 @@ Cada entrada documenta arquivo, propósito e risco de conflito para guiar o reba
 
 - **Fork:** `elderbernardi/hermes-webui`
 - **Branch de produção:** `exocortex/stable` (roda na porta 8787)
-- **Base atual (merge-base real):** upstream `v0.51.448` (Release PI, commit `32458c44`) — auditado 2026-06-23. A skin/rebrand (Camada 1) foi originalmente aplicada sobre `v0.51.440`, mas o branch já incorporou merges do upstream até v0.51.448.
+- **Base atual (merge-base real):** upstream **`exp-v0.52.61`** (commit `d486394f`) — **re-fundação HW-1 Strategy C executada 2026-07-14** (ver seção HW-1 no fim). Base anterior: `v0.51.448` (`32458c44`), preservada na tag `pre-refound-2026-07-13`.
 - **Política:** todas as modificações vivem no fork — sem PRs upstream (divergência arquitetural elevada).
 
 > Convenção de commit: cada modificação carrega a tag `[MOD-NNN]` no assunto para rastreio no `git log`.
@@ -340,3 +340,44 @@ achado crítico.**
 8787 atual (auth on + localhost). Prioridade dentro do HW-1, resolvido pela re-fundação
 ou por cherry-pick interino `d257e5f3`+`34342b9f`.
 
+
+
+### HW-1 — EXECUTADO (Strategy C, 2026-07-14)
+
+Re-fundação limpa concluída em `exocortex/stable-v2` (worktree `.worktrees/hw1-v2`) e
+promovida a `exocortex/stable` no cutover. Fatos:
+
+- **Base nova:** `upstream/master` @ `exp-v0.52.61` (`d486394f`); gap fechado de 2850/124.
+  A linhagem antiga vive na tag **`pre-refound-2026-07-13`** (pushada ao origin).
+- **Extração MOD-007/008 → `api/acervo_tab.py`:** o bloco inline (~620 linhas,
+  `_read_frontmatter_title` → `_handle_artifact_receipt` + inbox handlers) movido verbatim;
+  helpers core acessados via `routes.<name>` com `import api.routes as routes` no FIM do
+  módulo (circular-safe nas duas direções). `routes.py` agora tem ≈30 linhas de superfície
+  acervo: 2 delegações de dispatch + bloco de re-export (`_ACERVO_NATURES`,
+  `_ACERVO_UI_STATUSES`, `_acervo_root`, `_read_frontmatter_meta`, `_read_frontmatter_title`,
+  `_humanize_slug`, `_handle_acervo_status`, `_handle_acervo_stage_context`) — os módulos
+  fork-owned continuam byte-idênticos referenciando `routes.<name>`.
+  ⚠️ Lição do review: os dispatchers devem retornar **True** no match (os handlers retornam
+  `routes.j()` → None; devolver None fazia o server emitir uma SEGUNDA resposta 404 —
+  dessinc de keep-alive). Corrigido + teste de 3 requests na mesma conexão.
+- **Classificação (docs/hw1/CLASSIFICATION.md):** cherry-picks 2026-06-23 **DROPados**
+  (já upstream): #3961/#4544 credential-scrub (profiles.py inteiro), #4727 TLS accept
+  (server.py inteiro), #4650/#4662 config caching, #4774 shell-cache. **REAPPLY** = só a
+  camada MOD (skin/i18n/shell/acervo) + `_resolve_session_workspace`/`_enrich_artifact_entries`/
+  hooks do list_dir/sha256-no-save.
+- **Segurança de graça:** o RCE do terminal (gate `_embedded_terminal_gate_allows` + teste
+  CVD3) e o CORS same-origin (`Vary: Origin`, nunca `*`) **já estão no v0.52** — zero
+  cherry-picks de segurança pendentes.
+- **Contratos de teste novos do v0.52 absorvidos:** cobertura por-locale (as 16 chaves
+  `artifact_*`/`inbox_*` traduzidas em TODOS os locales, inseridas após `_label`/`_lang`);
+  `verdigris)` como skin final no `cmd_theme` (excrtx entra ANTES); tema boot default
+  `dark`; a linha-marcador literal `let _workspacePanelActiveTab = 'files';` preservada
+  (reassinada para 'artifacts' na linha seguinte) p/ os testes 4582.
+- **Verificação:** suíte completa **12.982 pass** (únicas falhas persistentes = 2
+  `test_tls_aware_probe` que falham igualmente no upstream puro — ambiente);
+  MOD-010 **154/154**; MOD-009 **24/24**; lint clean; smoke ao vivo em fixture com agente
+  online (capture→triage→promote-plane→publish-gate→assist→ask todos live); review
+  whole-branch (opus): 1 Critical (dispatch, corrigido) + 5 invariantes PASS.
+- **Risco futuro de conflito:** a tabela antiga de risco por arquivo fica OBSOLETA para o
+  acervo — `routes.py` caiu de +837 para +76 linhas fork-side. Maior superfície restante:
+  `static/index.html` (shell/rebrand) e `static/i18n.js` (chaves por locale).
