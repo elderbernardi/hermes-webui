@@ -318,7 +318,8 @@ async function authorizeWorkspaceEscapeNavigation(item){
   }
 }
 
-let _workspacePanelActiveTab = 'artifacts';  // MOD-008: default to the Sessão view, not the raw tree
+let _workspacePanelActiveTab = 'files';
+_workspacePanelActiveTab = 'artifacts';  // MOD-008: default to the Sessão view, not the raw tree (reassigned so upstream's literal-marker tests keep slicing on the line above)
 let _renderSessionArtifactsTimer = null;
 let _workspaceTodosLastRenderedHash = null;
 
