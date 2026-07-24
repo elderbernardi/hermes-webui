@@ -30,7 +30,7 @@ def load_schema() -> dict | None:
     return getattr(mod, "CANVAS_SCHEMA", None)
 
 
-def validate_core(core) -> tuple[bool, list[str]]:
+def validate_core(core: dict) -> tuple[bool, list[str]]:
     if not isinstance(core, dict):
         return False, ["núcleo não é objeto JSON"]
     errors = [f"campo obrigatório ausente/vazio: {k}"
@@ -38,7 +38,7 @@ def validate_core(core) -> tuple[bool, list[str]]:
     errors += [f"campo desconhecido: {k}" for k in core if k not in _ALLOWED]
     for field, allowed in _ENUMS.items():
         v = core.get(field)
-        if v is not None and v not in allowed:
+        if v is not None and (not isinstance(v, str) or v not in allowed):
             errors.append(f"{field} fora do enum: {v!r}")
     mp = core.get("microverso_primary")
     if mp is not None and not isinstance(mp, str):

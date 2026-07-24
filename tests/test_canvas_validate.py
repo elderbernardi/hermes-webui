@@ -40,3 +40,9 @@ def test_schema_oficial_usado_quando_presente(acervo):
     (acervo / "global/tools/harness/canvas_schema.py").write_text(
         "CANVAS_SCHEMA = {'type': 'object', 'required': ['focus']}\n")
     assert canvas_validate.load_schema() == {"type": "object", "required": ["focus"]}
+
+
+def test_enum_nao_string_nao_lanca(acervo):
+    core = dict(CORE_OK); core["vetor"] = ["execucao"]
+    ok, errors = canvas_validate.validate_core(core)
+    assert not ok and any("vetor" in e for e in errors)
