@@ -51,3 +51,47 @@ def test_draft_sem_texto_400(acervo):
 
 def test_path_desconhecido_retorna_false(acervo):
     assert not canvas_tarefas.handle_canvas_post(FakeHandler(), "/api/outro", {})
+
+
+def test_core_invalido_nao_persiste_nem_emite_delta(acervo, monkeypatch):
+    monkeypatch.setattr(
+        canvas_tarefas, "enquadrar",
+        lambda t: ({"focus": "F", "vetor": "turbo"}, ["vetor fora do enum"]))
+    h = FakeHandler()
+    canvas_tarefas.handle_canvas_post(h, "/api/canvas/draft", {"text": "x"})
+    cid = json.loads(h.wfile.getvalue())["canvas_id"]
+    q = canvas_tarefas.CANVAS_STREAMS[cid]
+    eventos = [q.get(timeout=5) for _ in range(2)]
+    assert [e[0] for e in eventos] == ["canvas_snapshot", "canvas_done"]
+    assert eventos[1][1]["valid"] is False
+    from api import canvas_store
+    assert canvas_store.load_canvas(cid)["focus"] == ""
+
+
+def test_excecao_no_enquadrador_emite_done_invalido(acervo, monkeypatch):
+    def boom(t):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(canvas_tarefas, "enquadrar", boom)
+    h = FakeHandler()
+    canvas_tarefas.handle_canvas_post(h, "/api/canvas/draft", {"text": "x"})
+    cid = json.loads(h.wfile.getvalue())["canvas_id"]
+    q = canvas_tarefas.CANVAS_STREAMS[cid]
+    nomes = [q.get(timeout=5)[0] for _ in range(2)]
+    assert nomes == ["canvas_snapshot", "canvas_done"]
+
+
+def test_registry_limpo_apos_delay_mesmo_sem_stream(acervo, monkeypatch):
+    import time as _t
+    monkeypatch.setattr(canvas_tarefas, "_CLEANUP_DELAY", 0.05)
+    monkeypatch.setattr(
+        canvas_tarefas, "enquadrar",
+        lambda t: ({"focus": "F", "vetor": "execucao",
+                    "intent_type": "produzir"}, []))
+    h = FakeHandler()
+    canvas_tarefas.handle_canvas_post(h, "/api/canvas/draft", {"text": "x"})
+    cid = json.loads(h.wfile.getvalue())["canvas_id"]
+    deadline = _t.time() + 2
+    while cid in canvas_tarefas.CANVAS_STREAMS and _t.time() < deadline:
+        _t.sleep(0.02)
+    assert cid not in canvas_tarefas.CANVAS_STREAMS

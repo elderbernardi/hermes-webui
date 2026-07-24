@@ -11,6 +11,7 @@ from api.canvas_enquadrador import enquadrar
 
 CANVAS_STREAMS: dict[str, queue.Queue] = {}
 _LOCK = threading.Lock()
+_CLEANUP_DELAY = 300.0  # s — coleta streams nunca abertos (spike single-user)
 
 
 def _j(handler, obj, status=200):
@@ -22,14 +23,28 @@ def _j(handler, obj, status=200):
     handler.wfile.write(data)
 
 
+def _schedule_cleanup(canvas_id: str) -> None:
+    def _sweep():
+        with _LOCK:
+            CANVAS_STREAMS.pop(canvas_id, None)
+
+    t = threading.Timer(_CLEANUP_DELAY, _sweep)
+    t.daemon = True
+    t.start()
+
+
 def _run_enquadrador(canvas_id: str, texto: str, q: queue.Queue) -> None:
-    core, errors = enquadrar(texto)
-    ops = canvas_store.core_to_patch(core)
-    if ops:
-        canvas = canvas_store.load_canvas(canvas_id)
-        canvas_store.save_canvas(canvas_id, canvas_store.apply_patch(canvas, ops))
-        q.put(("canvas_delta", ops))
+    try:
+        core, errors = enquadrar(texto)
+        ops = canvas_store.core_to_patch(core) if not errors else []
+        if ops:
+            canvas = canvas_store.load_canvas(canvas_id)
+            canvas_store.save_canvas(canvas_id, canvas_store.apply_patch(canvas, ops))
+            q.put(("canvas_delta", ops))
+    except Exception as exc:
+        errors = [f"enquadrador quebrou: {exc}"]
     q.put(("canvas_done", {"valid": not errors, "errors": errors}))
+    _schedule_cleanup(canvas_id)
 
 
 def handle_canvas_post(handler, path: str, body: dict) -> bool:
