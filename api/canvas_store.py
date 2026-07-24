@@ -51,7 +51,6 @@ def _canvas_path(canvas_id: str) -> Path:
     if not re.fullmatch(r"canvas_[0-9]{8}_[0-9]{6}_[a-z0-9-]+", canvas_id):
         raise ValueError(f"canvas_id inválido: {canvas_id!r}")
     d = tasks_dir() / canvas_id
-    d.mkdir(parents=True, exist_ok=True)
     return d / "canvas.yaml"
 
 
@@ -70,6 +69,7 @@ def create_draft(focus_text: str) -> tuple[str, dict]:
 
 def save_canvas(canvas_id: str, canvas: dict) -> None:
     p = _canvas_path(canvas_id)
+    p.parent.mkdir(parents=True, exist_ok=True)
     with _LOCK:
         p.write_text(yaml.safe_dump(canvas, allow_unicode=True, sort_keys=False),
                      encoding="utf-8")

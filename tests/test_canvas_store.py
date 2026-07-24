@@ -50,3 +50,20 @@ def test_core_to_patch_mapeia_nucleo_para_documento(acervo):
 def test_canvas_id_invalido_rejeitado(acervo):
     with pytest.raises(ValueError):
         canvas_store.load_canvas("../../etc/passwd")
+
+
+def test_load_inexistente_nao_cria_diretorio(acervo):
+    with pytest.raises(FileNotFoundError):
+        canvas_store.load_canvas("canvas_20260101_000000_typo")
+    assert not (acervo / "_tasks" / "canvas_20260101_000000_typo").exists()
+
+
+def test_create_draft_usa_template_quando_presente(acervo):
+    tpl = acervo / "global/templates/harness-v0.4/canvas.yaml"
+    tpl.write_text("canvas_id: ''\nfocus: ''\noriginal_input_summary: ''\n"
+                   "vector: evolucao\nintent_type: explorar\n"
+                   "microversos:\n  primary: null\n  related: []\ngaps: []\n"
+                   "marcador_template: true\n", encoding="utf-8")
+    cid, canvas = canvas_store.create_draft("x")
+    assert canvas.get("marcador_template") is True
+    assert canvas_store.load_canvas(cid).get("marcador_template") is True
