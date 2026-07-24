@@ -59,9 +59,9 @@ def enquadrar(texto: str) -> tuple[dict, list[str]]:
         microversos=", ".join(_microversos()) or "(nenhum)", texto=texto.strip())
     try:
         core = _parse_json(_call_llm(prompt))
+        ok, errors = validate_core(core)
     except Exception as exc:
         return {}, [f"enquadrador falhou: {exc}"]
-    ok, errors = validate_core(core)
     if ok:
         return core, []
     retry = (prompt + "\n\nSeu JSON anterior foi rejeitado: " + "; ".join(errors)

@@ -37,3 +37,25 @@ def test_prompt_lista_microversos(acervo, monkeypatch):
                         lambda p: seen.setdefault("p", p) or "{}")
     canvas_enquadrador.enquadrar("x")
     assert "comercial" in seen["p"] and "gabinete" in seen["p"]
+
+
+def test_retry_apos_json_schema_invalido(acervo, monkeypatch):
+    calls = []
+    respostas = ['{"focus": "F"}',
+                 '{"focus": "F", "vetor": "execucao", "intent_type": "produzir"}']
+
+    def fake(prompt):
+        calls.append(prompt)
+        return respostas[len(calls) - 1]
+
+    monkeypatch.setattr(canvas_enquadrador, "_call_llm", fake)
+    core, errors = canvas_enquadrador.enquadrar("x")
+    assert errors == [] and core["vetor"] == "execucao"
+    assert len(calls) == 2 and "rejeitado" in calls[1]
+
+
+def test_retry_tambem_invalido_retorna_erros(acervo, monkeypatch):
+    monkeypatch.setattr(canvas_enquadrador, "_call_llm",
+                        lambda p: '{"focus": "F"}')
+    core, errors = canvas_enquadrador.enquadrar("x")
+    assert errors and core.get("focus") == "F"
