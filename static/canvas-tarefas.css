@@ -1,0 +1,14 @@
+/* EXCRTX MOD-011 (spike F0) — namespace .cvt-* */
+.cvt-body { font: 15px/1.5 system-ui, sans-serif; margin: 0; background: #14141f; color: #e8e8f0; }
+.cvt-wrap { max-width: 760px; margin: 3rem auto; padding: 0 1rem; }
+.cvt-intake { display: flex; gap: .5rem; }
+.cvt-intake input { flex: 1; padding: .6rem .8rem; border-radius: 8px; border: 1px solid #2a2a45; background: #1c1c2e; color: inherit; }
+.cvt-intake button { padding: .6rem 1.2rem; border-radius: 8px; border: 0; background: #5b5bd6; color: #fff; cursor: pointer; }
+.cvt-status { color: #9a9ab0; min-height: 1.4em; }
+.cvt-canvas { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }
+.cvt-zona { border: 1px solid #2a2a45; border-radius: 10px; padding: .8rem 1rem; background: #1a1a2b; }
+.cvt-zona h2 { margin: 0 0 .4rem; font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: #9a9ab0; }
+.cvt-vetor-execucao { color: #ffb454; }
+.cvt-vetor-evolucao { color: #7ad0ff; }
+.cvt-vetor-manutencao { color: #9ef0a0; }
+.cvt-vetor-ambiguo { color: #ff8080; }
