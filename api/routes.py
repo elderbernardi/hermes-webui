@@ -13107,6 +13107,10 @@ def handle_get(handler, parsed) -> bool:
     from api.acervo_tab import handle_acervo_get as _acervo_get
     if _acervo_get(handler, parsed):
         return True
+    # EXCRTX MOD-011 — Canvas de Tarefas (api/canvas_tarefas.py)
+    from api.canvas_tarefas import handle_canvas_get as _canvas_get
+    if _canvas_get(handler, parsed):
+        return True
 
     if parsed.path == "/api/file":
         return _handle_file_read(handler, parsed)
@@ -15060,6 +15064,10 @@ def handle_post(handler, parsed) -> bool:
     # EXCRTX MOD-007..010 — Acervo (api/acervo_tab.py)
     from api.acervo_tab import handle_acervo_post as _acervo_post
     if _acervo_post(handler, parsed.path, body):
+        return True
+    # EXCRTX MOD-011 — Canvas de Tarefas (api/canvas_tarefas.py)
+    from api.canvas_tarefas import handle_canvas_post as _canvas_post
+    if _canvas_post(handler, parsed.path, body):
         return True
 
     if parsed.path == "/api/file/create-dir":
