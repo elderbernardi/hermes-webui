@@ -22,6 +22,19 @@ def _bloco_lista(titulo: str, itens: list[str]) -> list[str]:
     return [f"{titulo}:"] + [f"- {item}" for item in itens] + [""]
 
 
+def _fmt_acervo_item(item) -> str:
+    """Um item de `acervo_aplicado` é {path, nature, porque} (ver
+    canvas.yaml/_MINIMAL); serializa em uma linha legível. Aceita string
+    solta por robustez."""
+    if not isinstance(item, dict):
+        return str(item)
+    path = item.get("path") or ""
+    nature = item.get("nature") or ""
+    porque = item.get("porque") or ""
+    head = f"{path} ({nature})" if nature else path
+    return f"{head} — {porque}" if porque else head
+
+
 def compile_brief(doc: dict) -> str:
     vetor = doc.get("vetor")
     if vetor == "ambiguo":
@@ -58,6 +71,16 @@ def compile_brief(doc: dict) -> str:
     linhas.extend(_bloco_lista("Suposições", doc.get("assumptions") or []))
     linhas.extend(_bloco_lista(
         "Artefatos esperados", (doc.get("artifacts") or {}).get("expected") or []))
+
+    # Sugestões do Curador (F2) aceitas no canvas — só entram no brief quando
+    # populadas (fluxo F1b as deixa vazias → zero regressão). Personas são nomes/
+    # paths (strings); acervo_aplicado são {path, nature, porque}.
+    linhas.extend(_bloco_lista(
+        "Personas sugeridas", (doc.get("personas") or {}).get("suggested") or []))
+    linhas.extend(_bloco_lista(
+        "Acervo aplicado",
+        [_fmt_acervo_item(it) for it in (doc.get("acervo_aplicado") or [])]))
+
     linhas.extend(_bloco_lista("Próximos passos", doc.get("next_moves") or []))
 
     return "\n".join(linhas).rstrip("\n") + "\n"
