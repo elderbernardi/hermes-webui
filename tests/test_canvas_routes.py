@@ -285,3 +285,29 @@ def test_launch_ambiguo_400(acervo):
     h = FakeHandler()
     canvas_tarefas.handle_canvas_post(h, "/api/canvas/launch", {"canvas_id": cid})
     assert h.status == 400
+
+
+def test_launch_falha_pos_registro_devolve_task_id_para_reconciliar(acervo, monkeypatch):
+    """Falha DEPOIS do register (sessão/stage/links) não pode virar exceção
+    crua nem orfão silencioso: 500 limpo carregando o task_id já criado, pra
+    dar pra reconciliar/limpar a task órfã em `_tasks/<task_id>/`."""
+    from api import canvas_store
+    cid, doc = canvas_store.create_draft("Renegociar Beta")
+    doc.update({"focus": "Renegociar Beta", "vetor": "execucao",
+                "intent_type": "produzir"})
+    canvas_store.save_canvas(cid, doc)
+    canvas_tarefas.CANVAS_JOBS[cid] = canvas_tarefas._new_job()
+
+    monkeypatch.setattr(
+        canvas_tarefas, "_register_task",
+        lambda canvas_path, title: "task_20260724_renegociar-beta_130000")
+
+    def boom():
+        raise RuntimeError("sessão indisponível")
+
+    monkeypatch.setattr(canvas_tarefas, "_new_session", boom)
+    h = FakeHandler()
+    canvas_tarefas.handle_canvas_post(h, "/api/canvas/launch", {"canvas_id": cid})
+    assert h.status == 500
+    body = json.loads(h.wfile.getvalue())
+    assert body["task_id"] == "task_20260724_renegociar-beta_130000"

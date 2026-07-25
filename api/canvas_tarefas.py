@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import threading
 from urllib.parse import parse_qs
 
@@ -187,14 +188,16 @@ def _register_task(canvas_path, title: str) -> str:
     como subprocesso (script vive no acervo real, fora deste worktree).
     Levanta exceção em qualquer falha — o handler traduz em 500."""
     import os
-    import subprocess
     import sys
 
     script = canvas_store.acervo_root() / "global/tools/harness/register_task_from_canvas.py"
+    # timeout=30: um register travado não pode prender a thread HTTP para
+    # sempre — deixa subprocess.TimeoutExpired propagar; o handler trata
+    # esse caso especificamente (500 {"error": "register timeout"}).
     result = subprocess.run(
         [sys.executable, str(script), "--canvas", str(canvas_path), "--title", title],
         env={**os.environ, "ACERVO": str(canvas_store.acervo_root())},
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=30,
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr[-200:])
@@ -241,15 +244,27 @@ def _handle_launch(handler, body: dict) -> None:
 
     try:
         task_id = _register_task(canvas_path, (doc.get("focus") or "")[:80])
+    except subprocess.TimeoutExpired:
+        _j(handler, {"error": "register timeout"}, 500)
+        return
     except Exception as exc:
         _j(handler, {"error": "register falhou", "detail": str(exc)[-200:]}, 500)
         return
 
-    session = _new_session()
-    attachments = [_stage_file(session.session_id, p)
-                  for p in (canvas_path, brief_path)]
+    # A partir daqui `_tasks/<task_id>/` já existe (o register criou). Se
+    # qualquer passo seguinte falhar, a task fica órfã mas RECONCILIÁVEL —
+    # por isso o 500 carrega o task_id de volta, em vez de vazar uma
+    # exceção crua (não-JSON) pro cliente e silenciar o estado parcial.
+    try:
+        session = _new_session()
+        attachments = [_stage_file(session.session_id, p)
+                      for p in (canvas_path, brief_path)]
+        _update_links(task_id, session.session_id)
+    except Exception as exc:
+        _j(handler, {"error": f"launch falhou pós-registro: {exc}",
+                     "task_id": task_id}, 500)
+        return
 
-    _update_links(task_id, session.session_id)
     _emit(cid, "canvas_launched", {"task_id": task_id, "session_id": session.session_id})
 
     _j(handler, {
