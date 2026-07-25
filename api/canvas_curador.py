@@ -549,6 +549,11 @@ Fontes: {fontes}
 
 
 def _skill_pesquisar(task) -> tuple[dict | None, str | None]:
+    # Defense-in-depth: a flag também vale em qualquer entry point (não só no
+    # boundary handle_curador_post). Desabilitada -> recusa calma via gap, sem
+    # tocar a web (mesmo comportamento do boundary, adaptado ao contrato de skill).
+    if os.environ.get("CURADOR_ENABLE_PESQUISAR") != "1":
+        return (None, "pesquisar desabilitado (CURADOR_ENABLE_PESQUISAR)")
     tema = task["metadata"]["args"].get("tema") or ""
     query = tema
     fontes: list[str] = []

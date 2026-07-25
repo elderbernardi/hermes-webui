@@ -177,6 +177,31 @@ def test_pesquisar_desabilitado_por_default_400(curador_env, monkeypatch):
     assert h.status == 400
 
 
+def test_pesquisar_flag_off_nao_executa_via_delegar(curador_env, monkeypatch):
+    # delegar() não passa pelo boundary; a flag OFF tem de barrar no _skill_pesquisar,
+    # sem chamar a web, virando gap calmo (task -> failed).
+    monkeypatch.delenv("CURADOR_ENABLE_PESQUISAR", raising=False)
+    chamou = {"web": 0}
+    monkeypatch.setattr(canvas_curador, "_web_search",
+                        lambda q: (chamou.__setitem__("web", chamou["web"] + 1), [])[1])
+    tid = canvas_curador.delegar("c", "pesquisar", tema="preços de mercado")
+    t = _wait_state(tid, "failed")
+    assert chamou["web"] == 0                               # pesquisa NÃO executada
+    eventos = dict(canvas_curador.CURADOR_ROOMS["c"]["events"])
+    assert "CURADOR_ENABLE_PESQUISAR" in eventos["curador_gap"]["motivo"]
+
+
+def test_pesquisar_flag_off_skill_direto(monkeypatch):
+    # entry point direto: _skill_pesquisar recusa sem tocar a web
+    monkeypatch.delenv("CURADOR_ENABLE_PESQUISAR", raising=False)
+    monkeypatch.setattr(canvas_curador, "_web_search",
+                        lambda q: (_ for _ in ()).throw(AssertionError("web não deveria rodar")))
+    t = a2a.new_task(contextId="c", skill="pesquisar", budget_tokens=6000)
+    t["metadata"]["args"] = {"tema": "x"}
+    art, gap = canvas_curador._skill_pesquisar(t)
+    assert art is None and "CURADOR_ENABLE_PESQUISAR" in gap
+
+
 def test_allow_scopes_validado_server_side(curador_env):
     # 'comercial' existe (fixture criou micro/comercial); 'fantasma' não
     assert canvas_curador._valid_allow_scopes(["comercial"]) is True
