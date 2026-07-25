@@ -19,6 +19,7 @@ from urllib.parse import parse_qs
 
 from api import canvas_store
 from api import curador_a2a as a2a
+from api.canvas_curador_retrieve import curador_retrieve, curador_posture
 from api.curador_a2a import TaskStore, new_message, new_task, transition
 
 logger = logging.getLogger("canvas_curador")
@@ -369,3 +370,66 @@ def _ledger_retrieve(task, out: dict) -> None:
 
 def _ledger_emit(task, payload: dict) -> None:
     task["metadata"]["hygiene"]["executor_tokens"] += _tokens_est(payload)
+
+
+_BUSCAR_PROMPT = """Você é o Curador (role auxiliar). Destile os resultados do acervo
+abaixo em um objeto JSON com: "porque" (1 frase, por que isto ajuda a tarefa) e,
+opcionalmente, "next_move" (1 próximo passo acionável). NUNCA reescreva as citações;
+não invente paths. Responda SOMENTE com o JSON.
+
+Consulta: {query}
+Resultados (citações verbatim): {citations}
+Conteúdo: {items}
+"""
+
+
+def _primary_scope(canvas: dict, escopo) -> str:
+    if escopo:
+        return escopo
+    return (canvas.get("microversos") or {}).get("primary") or "global"
+
+
+def _sig(out: dict) -> str:
+    """Assinatura de dedup: paths citados ordenados (dedup por path, não relevância)."""
+    return "|".join(sorted(out.get("citations") or []))
+
+
+def _skill_buscar_acervo(task) -> tuple[dict | None, str | None]:
+    args = task["metadata"]["args"]
+    query = args.get("query") or ""
+    canvas = canvas_store.load_canvas(task["contextId"])
+    scope = _primary_scope(canvas, args.get("escopo"))
+    related = (canvas.get("microversos") or {}).get("related") or []
+    allow = list(args.get("allow_scopes") or [])
+    fetches = 0
+    while fetches < MAX_FETCHES:
+        out = curador_retrieve(query, scope, budget=RETRIEVE_BUDGET, k=5, allow_scopes=allow)
+        _ledger_retrieve(task, out)
+        fetches += 1
+        if out.get("found") and out.get("citations"):
+            break
+        _bump_empty(task, _sig(out))
+        if _empty_exhausted(task):
+            return (None, f"Curador não encontrou '{query}' após {fetches} buscas")
+        allow = list(dict.fromkeys(allow + related))  # alarga o escopo p/ a 2ª busca
+    citations = out.get("citations") or []
+    items_txt = "; ".join(i.get("header", "") for i in (out.get("items") or []))[:1500]
+    try:
+        distilled = json.loads(_call_llm_curator(_BUSCAR_PROMPT.format(
+            query=query, citations=citations, items=items_txt)))
+    except Exception:
+        distilled = {"porque": "resultado do acervo"}
+    path = citations[0].replace("Acervo: ", "") if citations else ""
+    data = {"tipo": "buscar_acervo", "path": path, "citations": citations,
+            "porque": distilled.get("porque", ""), "fonte": "acervoctl retrieve",
+            "trust": "trusted", "tokens_est": out.get("total_tokens", 0)}
+    ops = []
+    if distilled.get("next_move"):
+        ops.append({"op": "add", "path": "/next_moves/-", "value": distilled["next_move"]})
+    art = a2a.new_artifact(name="busca_acervo",
+                           description=(distilled.get("porque") or "")[:120],
+                           data=data, ops=ops)
+    return (art, None)
+
+
+_SKILLS["buscar_acervo"] = _skill_buscar_acervo
