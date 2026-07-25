@@ -21,6 +21,10 @@ from api import canvas_store
 from api import curador_a2a as a2a
 from api.canvas_curador_retrieve import curador_retrieve, curador_posture
 from api.curador_a2a import TaskStore, new_message, new_task, transition
+# Leitor-só da memória viva off-trail (T10). O worker NUNCA importa a rotina
+# escritora do cache — guardrail "Curador nunca escreve no acervo" (decisão b).
+# Consumo pleno do AgentCard fica para a skill sugerir_itens.
+from api.curador_capabilities import load_capability_card
 
 logger = logging.getLogger("canvas_curador")
 
