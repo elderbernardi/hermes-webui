@@ -32,14 +32,16 @@ def acervo(tmp_path, monkeypatch):
 def test_draft_dispara_snapshot_delta_done(acervo, monkeypatch):
     monkeypatch.setattr(
         canvas_tarefas, "enquadrar",
-        lambda t: ({"focus": "F", "vetor": "execucao",
+        lambda t, session=None: ({"focus": "F", "vetor": "execucao",
                     "intent_type": "produzir", "gaps": ["g"]}, []))
     h = FakeHandler()
     assert canvas_tarefas.handle_canvas_post(
         h, "/api/canvas/draft", {"text": "renegociar Alfa"})
     cid = json.loads(h.wfile.getvalue())["canvas_id"]
-    q = canvas_tarefas.CANVAS_STREAMS[cid]
-    eventos = [q.get(timeout=5)[0] for _ in range(3)]
+    job = canvas_tarefas.CANVAS_JOBS[cid]
+    with job["cond"]:
+        job["cond"].wait_for(lambda: job["status"] == "done", timeout=5)
+    eventos = [n for n, _ in job["events"]]
     assert eventos == ["canvas_snapshot", "canvas_delta", "canvas_done"]
 
 
@@ -56,12 +58,14 @@ def test_path_desconhecido_retorna_false(acervo):
 def test_core_invalido_nao_persiste_nem_emite_delta(acervo, monkeypatch):
     monkeypatch.setattr(
         canvas_tarefas, "enquadrar",
-        lambda t: ({"focus": "F", "vetor": "turbo"}, ["vetor fora do enum"]))
+        lambda t, session=None: ({"focus": "F", "vetor": "turbo"}, ["vetor fora do enum"]))
     h = FakeHandler()
     canvas_tarefas.handle_canvas_post(h, "/api/canvas/draft", {"text": "x"})
     cid = json.loads(h.wfile.getvalue())["canvas_id"]
-    q = canvas_tarefas.CANVAS_STREAMS[cid]
-    eventos = [q.get(timeout=5) for _ in range(2)]
+    job = canvas_tarefas.CANVAS_JOBS[cid]
+    with job["cond"]:
+        job["cond"].wait_for(lambda: job["status"] == "done", timeout=5)
+    eventos = job["events"]
     assert [e[0] for e in eventos] == ["canvas_snapshot", "canvas_done"]
     assert eventos[1][1]["valid"] is False
     from api import canvas_store
@@ -69,15 +73,17 @@ def test_core_invalido_nao_persiste_nem_emite_delta(acervo, monkeypatch):
 
 
 def test_excecao_no_enquadrador_emite_done_invalido(acervo, monkeypatch):
-    def boom(t):
+    def boom(t, session=None):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(canvas_tarefas, "enquadrar", boom)
     h = FakeHandler()
     canvas_tarefas.handle_canvas_post(h, "/api/canvas/draft", {"text": "x"})
     cid = json.loads(h.wfile.getvalue())["canvas_id"]
-    q = canvas_tarefas.CANVAS_STREAMS[cid]
-    nomes = [q.get(timeout=5)[0] for _ in range(2)]
+    job = canvas_tarefas.CANVAS_JOBS[cid]
+    with job["cond"]:
+        job["cond"].wait_for(lambda: job["status"] == "done", timeout=5)
+    nomes = [n for n, _ in job["events"]]
     assert nomes == ["canvas_snapshot", "canvas_done"]
 
 
@@ -96,12 +102,54 @@ def test_registry_limpo_apos_delay_mesmo_sem_stream(acervo, monkeypatch):
     monkeypatch.setattr(canvas_tarefas, "_CLEANUP_DELAY", 0.05)
     monkeypatch.setattr(
         canvas_tarefas, "enquadrar",
-        lambda t: ({"focus": "F", "vetor": "execucao",
+        lambda t, session=None: ({"focus": "F", "vetor": "execucao",
                     "intent_type": "produzir"}, []))
     h = FakeHandler()
     canvas_tarefas.handle_canvas_post(h, "/api/canvas/draft", {"text": "x"})
     cid = json.loads(h.wfile.getvalue())["canvas_id"]
     deadline = _t.time() + 2
-    while cid in canvas_tarefas.CANVAS_STREAMS and _t.time() < deadline:
+    while cid in canvas_tarefas.CANVAS_JOBS and _t.time() < deadline:
         _t.sleep(0.02)
-    assert cid not in canvas_tarefas.CANVAS_STREAMS
+    assert cid not in canvas_tarefas.CANVAS_JOBS
+
+
+def test_replay_por_cursor_dois_leitores(acervo, monkeypatch):
+    monkeypatch.setattr(canvas_tarefas, "enquadrar",
+                        lambda t, session=None: ({"focus": "F", "vetor": "execucao",
+                                                  "intent_type": "produzir"}, []))
+    h = FakeHandler()
+    canvas_tarefas.handle_canvas_post(h, "/api/canvas/draft", {"text": "x"})
+    cid = json.loads(h.wfile.getvalue())["canvas_id"]
+    job = canvas_tarefas.CANVAS_JOBS[cid]
+    with job["cond"]:
+        job["cond"].wait_for(lambda: job["status"] == "done", timeout=5)
+    nomes = [n for n, _ in job["events"]]
+    assert nomes == ["canvas_snapshot", "canvas_delta", "canvas_done"]
+    assert nomes == [n for n, _ in job["events"]]  # segunda leitura idêntica (replay)
+
+
+def test_poll_endpoint(acervo, monkeypatch):
+    monkeypatch.setattr(canvas_tarefas, "enquadrar",
+                        lambda t, session=None: ({"focus": "F", "vetor": "execucao",
+                                                  "intent_type": "produzir"}, []))
+    h = FakeHandler()
+    canvas_tarefas.handle_canvas_post(h, "/api/canvas/draft", {"text": "x"})
+    cid = json.loads(h.wfile.getvalue())["canvas_id"]
+    job = canvas_tarefas.CANVAS_JOBS[cid]
+    with job["cond"]:
+        job["cond"].wait_for(lambda: job["status"] == "done", timeout=5)
+    h2 = FakeHandler()
+    from urllib.parse import urlparse
+    canvas_tarefas.handle_canvas_get(h2, urlparse(f"/api/canvas/job?canvas_id={cid}"))
+    body = json.loads(h2.wfile.getvalue())
+    assert body["status"] == "done" and body["valid"] is True and body["n_events"] == 3
+
+
+def test_list_para_o_atrio(acervo, monkeypatch):
+    from api import canvas_store
+    cid, _ = canvas_store.create_draft("listar isto")
+    h = FakeHandler()
+    from urllib.parse import urlparse
+    canvas_tarefas.handle_canvas_get(h, urlparse("/api/canvas/list"))
+    lista = json.loads(h.wfile.getvalue())
+    assert any(item["canvas_id"] == cid for item in lista)
