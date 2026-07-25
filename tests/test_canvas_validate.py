@@ -46,3 +46,16 @@ def test_enum_nao_string_nao_lanca(acervo):
     core = dict(CORE_OK); core["vetor"] = ["execucao"]
     ok, errors = canvas_validate.validate_core(core)
     assert not ok and any("vetor" in e for e in errors)
+
+
+def test_v05_intent_type_8_e_campos_metodo(acervo):
+    core = dict(CORE_OK, intent_type="publicar", shape="tarefa",
+                done_criteria="oficio aprovado", verification="manifest+receipt")
+    ok, errors = canvas_validate.validate_core(core)
+    assert ok, errors
+
+
+def test_v05_shape_invalido_falha(acervo):
+    core = dict(CORE_OK, shape="epico")
+    ok, errors = canvas_validate.validate_core(core)
+    assert not ok and any("shape" in e for e in errors)

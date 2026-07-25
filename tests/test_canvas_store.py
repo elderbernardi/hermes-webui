@@ -42,7 +42,7 @@ def test_core_to_patch_mapeia_nucleo_para_documento(acervo):
         "focus": "F", "vetor": "execucao", "intent_type": "produzir",
         "microverso_primary": "comercial", "gaps": ["g1", "g2"],
     })
-    assert {"op": "replace", "path": "/vector", "value": "execucao"} in ops
+    assert {"op": "replace", "path": "/vetor", "value": "execucao"} in ops
     assert {"op": "replace", "path": "/microversos/primary", "value": "comercial"} in ops
     assert {"op": "add", "path": "/gaps/-", "value": "g2"} in ops
 
@@ -53,9 +53,10 @@ def test_canvas_id_invalido_rejeitado(acervo):
 
 
 def test_load_inexistente_nao_cria_diretorio(acervo):
+    # id bem-formado (regex pós-Task2 exige sufixo de unicidade _NNNNN) mas inexistente.
     with pytest.raises(FileNotFoundError):
-        canvas_store.load_canvas("canvas_20260101_000000_typo")
-    assert not (acervo / "_tasks" / "canvas_20260101_000000_typo").exists()
+        canvas_store.load_canvas("canvas_20260101_000000_typo_00001")
+    assert not (acervo / "_tasks" / "canvas_20260101_000000_typo_00001").exists()
 
 
 def test_create_draft_usa_template_quando_presente(acervo):
@@ -67,3 +68,26 @@ def test_create_draft_usa_template_quando_presente(acervo):
     cid, canvas = canvas_store.create_draft("x")
     assert canvas.get("marcador_template") is True
     assert canvas_store.load_canvas(cid).get("marcador_template") is True
+
+
+def test_v05_core_to_patch_identidade_vetor(acervo):
+    ops = canvas_store.core_to_patch({
+        "focus": "F", "vetor": "execucao", "intent_type": "produzir",
+        "shape": "tarefa", "done_criteria": "D", "verification": "V"})
+    assert {"op": "replace", "path": "/vetor", "value": "execucao"} in ops
+    assert {"op": "replace", "path": "/done_criteria", "value": "D"} in ops
+    assert not any(o["path"] == "/vector" for o in ops)
+
+
+def test_v05_load_normaliza_doc_antigo_vector(acervo):
+    cid, canvas = canvas_store.create_draft("x")
+    canvas.pop("vetor", None); canvas["vector"] = "manutencao"
+    canvas_store.save_canvas(cid, canvas)
+    doc = canvas_store.load_canvas(cid)
+    assert doc.get("vetor") == "manutencao" and "vector" not in doc
+
+
+def test_canvas_id_unico_mesmo_segundo(acervo):
+    a, _ = canvas_store.create_draft("mesmo titulo")
+    b, _ = canvas_store.create_draft("mesmo titulo")
+    assert a != b

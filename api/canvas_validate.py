@@ -13,11 +13,14 @@ from api.canvas_store import acervo_root
 _REQUIRED = ("focus", "vetor", "intent_type")
 _ENUMS = {
     "vetor": {"execucao", "evolucao", "manutencao", "ambiguo"},
-    "intent_type": {"explorar", "decidir", "produzir", "revisar", "manter"},
+    "intent_type": {"explorar", "decidir", "produzir", "revisar", "manter",
+                     "publicar", "ingestao", "outro"},
     "macroverso_status": {"resolved", "partial", "placeholder", "missing"},
     "urgency": {"alta", "media", "baixa"},
+    "shape": {"pergunta", "plano-primeiro", "tarefa"},
 }
-_ALLOWED = set(_ENUMS) | {"focus", "microverso_primary", "gaps"}
+_ALLOWED = set(_ENUMS) | {"focus", "microverso_primary", "gaps",
+                          "done_criteria", "verification"}
 
 
 def load_schema() -> dict | None:

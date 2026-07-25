@@ -1,0 +1,9 @@
+{
+  "task_states": ["submitted", "working", "input-required", "completed", "failed", "canceled"],
+  "hyphenated_states": ["input-required"],
+  "part_kinds": ["text", "data"],
+  "task_required_fields": ["id", "contextId", "status", "history", "artifacts", "metadata"],
+  "status_required_fields": ["state", "timestamp", "message"],
+  "message_required_fields": ["role", "parts", "messageId", "taskId", "metadata"],
+  "artifact_required_fields": ["artifactId", "name", "description", "parts", "metadata"]
+}

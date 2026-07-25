@@ -6,6 +6,7 @@ deltas (subset RFC 6902). Sem dependências novas (PyYAML já é requisito).
 from __future__ import annotations
 
 import copy
+import itertools
 import os
 import re
 import threading
@@ -16,13 +17,22 @@ import yaml
 
 _LOCK = threading.Lock()
 _TEMPLATE_REL = "global/templates/harness-v0.4/canvas.yaml"
+# Sufixo determinístico de unicidade (sem random/Date.now — regra do harness):
+# pid (3 dígitos) + contador incremental de módulo (>=2 dígitos, sem módulo/
+# wraparound — cresce além de 2 dígitos após 100 create_draft no mesmo
+# processo; tolerado pelo regex {5,} em _canvas_path, nunca colide).
+_SEQ = itertools.count()
 
 _MINIMAL = {
     "canvas_id": "", "focus": "", "original_input_summary": "",
-    "vector": "evolucao", "intent_type": "explorar",
+    "vetor": "evolucao", "intent_type": "explorar",
     "user_intention": {"explicit": "", "inferred": "", "confidence": "medium"},
     "microversos": {"primary": None, "related": []},
     "gaps": [], "dependencies": [], "risks": [], "next_moves": [],
+    "shape": "tarefa", "done_criteria": "", "verification": "",
+    "scope": [], "assumptions": [], "authorization": [],
+    "personas": {"suggested": [], "explicit": [], "evaluators": []},
+    "acervo_aplicado": [],
 }
 
 
@@ -44,11 +54,12 @@ def tasks_dir() -> Path:
 
 def new_canvas_id(slug: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", slug.lower()).strip("-")[:40] or "tarefa"
-    return f"canvas_{time.strftime('%Y%m%d_%H%M%S')}_{slug}"
+    suffix = f"{os.getpid() % 1000:03d}{next(_SEQ):02d}"
+    return f"canvas_{time.strftime('%Y%m%d_%H%M%S')}_{slug}_{suffix}"
 
 
 def _canvas_path(canvas_id: str) -> Path:
-    if not re.fullmatch(r"canvas_[0-9]{8}_[0-9]{6}_[a-z0-9-]+", canvas_id):
+    if not re.fullmatch(r"canvas_[0-9]{8}_[0-9]{6}_[a-z0-9-]+_[0-9]{5,}", canvas_id):
         raise ValueError(f"canvas_id inválido: {canvas_id!r}")
     d = tasks_dir() / canvas_id
     return d / "canvas.yaml"
@@ -76,7 +87,10 @@ def save_canvas(canvas_id: str, canvas: dict) -> None:
 
 
 def load_canvas(canvas_id: str) -> dict:
-    return yaml.safe_load(_canvas_path(canvas_id).read_text(encoding="utf-8"))
+    doc = yaml.safe_load(_canvas_path(canvas_id).read_text(encoding="utf-8"))
+    if "vector" in doc and "vetor" not in doc:
+        doc["vetor"] = doc.pop("vector")
+    return doc
 
 
 # --- subset RFC 6902: add / replace / remove --------------------------------
@@ -116,13 +130,16 @@ def apply_patch(canvas: dict, ops: list[dict]) -> dict:
     return canvas
 
 
-# --- mapeador núcleo (schema v0.4, chave `vetor`) → documento (template, `vector`)
+# --- mapeador núcleo (schema v0.5) → documento (mapa-identidade em `vetor`)
 
 _CORE_TO_DOC = {
     "focus": "/focus",
-    "vetor": "/vector",
+    "vetor": "/vetor",
     "intent_type": "/intent_type",
     "microverso_primary": "/microversos/primary",
+    "shape": "/shape",
+    "done_criteria": "/done_criteria",
+    "verification": "/verification",
 }
 
 
@@ -134,3 +151,26 @@ def core_to_patch(core: dict) -> list[dict]:
     for gap in core.get("gaps") or []:
         ops.append({"op": "add", "path": "/gaps/-", "value": gap})
     return ops
+
+
+def _doc_to_core(doc: dict) -> dict:
+    """Inverso de `_CORE_TO_DOC`: re-extrai o núcleo (schema v0.5) a partir
+    do documento (`/microversos/primary` → `microverso_primary`). Usado
+    depois de um patch para revalidar com `canvas_validate.validate_core`.
+    Chaves AUSENTES no doc ficam de fora do núcleo (não viram `None`), pra
+    não disparar "campo desconhecido" ou falha de enum à toa."""
+    core: dict = {}
+    for key, path in _CORE_TO_DOC.items():
+        try:
+            parent, last = _resolve(doc, path)
+        except (KeyError, IndexError, TypeError):
+            continue
+        if isinstance(parent, list):
+            idx = int(last)
+            if 0 <= idx < len(parent):
+                core[key] = parent[idx]
+        elif last in parent:
+            core[key] = parent[last]
+    if doc.get("gaps") is not None:
+        core["gaps"] = list(doc["gaps"])
+    return core
