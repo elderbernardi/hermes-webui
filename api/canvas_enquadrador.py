@@ -43,7 +43,12 @@ def _call_llm(prompt: str) -> str:
     if not cmd:
         raise RuntimeError("CANVAS_LLM_CMD não definido (seam do spike F0)")
     proc = subprocess.run(cmd, shell=True, input=prompt.encode("utf-8"),
-                          stdout=subprocess.PIPE, timeout=120)
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          timeout=120)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"CANVAS_LLM_CMD exit {proc.returncode}: "
+            f"{proc.stderr.decode('utf-8', 'replace')[-200:]}")
     return proc.stdout.decode("utf-8", "replace")
 
 

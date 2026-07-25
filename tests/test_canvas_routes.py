@@ -81,6 +81,16 @@ def test_excecao_no_enquadrador_emite_done_invalido(acervo, monkeypatch):
     assert nomes == ["canvas_snapshot", "canvas_done"]
 
 
+def test_get_inexistente_nao_vaza_caminho(acervo):
+    h = FakeHandler()
+    from urllib.parse import urlparse
+    canvas_tarefas.handle_canvas_get(
+        h, urlparse("/api/canvas/get?canvas_id=canvas_20260101_000000_x0"))
+    assert h.status == 404
+    body = h.wfile.getvalue().decode()
+    assert "/home/" not in body and "_tasks" not in body
+
+
 def test_registry_limpo_apos_delay_mesmo_sem_stream(acervo, monkeypatch):
     import time as _t
     monkeypatch.setattr(canvas_tarefas, "_CLEANUP_DELAY", 0.05)

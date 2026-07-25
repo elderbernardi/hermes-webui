@@ -70,8 +70,8 @@ def handle_canvas_get(handler, parsed) -> bool:
         cid = (parse_qs(parsed.query).get("canvas_id") or [""])[0]
         try:
             _j(handler, canvas_store.load_canvas(cid))
-        except Exception as exc:
-            _j(handler, {"error": str(exc)}, 404)
+        except Exception:
+            _j(handler, {"error": "canvas desconhecido"}, 404)
         return True
     if parsed.path != "/api/canvas/stream":
         return False

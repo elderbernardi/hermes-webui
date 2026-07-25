@@ -59,3 +59,9 @@ def test_retry_tambem_invalido_retorna_erros(acervo, monkeypatch):
                         lambda p: '{"focus": "F"}')
     core, errors = canvas_enquadrador.enquadrar("x")
     assert errors and core.get("focus") == "F"
+
+
+def test_call_llm_falha_de_comando_erro_diagnostico(acervo, monkeypatch):
+    monkeypatch.setenv("CANVAS_LLM_CMD", "false")  # exit 1, stdout vazio
+    core, errors = canvas_enquadrador.enquadrar("x")
+    assert errors and any("exit" in e or "código" in e for e in errors)

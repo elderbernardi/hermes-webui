@@ -53,9 +53,10 @@ def test_canvas_id_invalido_rejeitado(acervo):
 
 
 def test_load_inexistente_nao_cria_diretorio(acervo):
+    # id bem-formado (regex pós-Task2 exige sufixo de unicidade _NNNNN) mas inexistente.
     with pytest.raises(FileNotFoundError):
-        canvas_store.load_canvas("canvas_20260101_000000_typo")
-    assert not (acervo / "_tasks" / "canvas_20260101_000000_typo").exists()
+        canvas_store.load_canvas("canvas_20260101_000000_typo_00001")
+    assert not (acervo / "_tasks" / "canvas_20260101_000000_typo_00001").exists()
 
 
 def test_create_draft_usa_template_quando_presente(acervo):
@@ -84,3 +85,9 @@ def test_v05_load_normaliza_doc_antigo_vector(acervo):
     canvas_store.save_canvas(cid, canvas)
     doc = canvas_store.load_canvas(cid)
     assert doc.get("vetor") == "manutencao" and "vector" not in doc
+
+
+def test_canvas_id_unico_mesmo_segundo(acervo):
+    a, _ = canvas_store.create_draft("mesmo titulo")
+    b, _ = canvas_store.create_draft("mesmo titulo")
+    assert a != b
