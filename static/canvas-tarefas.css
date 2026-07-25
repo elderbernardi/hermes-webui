@@ -12,3 +12,53 @@
 .cvt-vetor-evolucao { color: #7ad0ff; }
 .cvt-vetor-manutencao { color: #9ef0a0; }
 .cvt-vetor-ambiguo { color: #ff8080; }
+
+/* EXCRTX MOD-011 (F1) — Hangar + Cockpit dialog surface (task 7) */
+#canvasRoot[hidden] { display: none !important; }
+.cvt-root { position: fixed; inset: 0; z-index: 1200; background: #14141f; color: #e8e8f0;
+  font: 15px/1.5 system-ui, sans-serif; display: flex; flex-direction: column; overflow: hidden; }
+.cvt-top { display: flex; align-items: center; gap: 12px; padding: .6rem 1rem;
+  background: #191927; border-bottom: 1px solid #2a2a45; flex: none; }
+.cvt-mode { display: flex; background: #14141f; border: 1px solid #2a2a45; border-radius: 8px; padding: 2px; }
+.cvt-mode button { padding: .35rem .7rem; border-radius: 6px; color: #9a9ab0; background: none;
+  border: 0; cursor: pointer; font: 600 11.5px/1 inherit; }
+.cvt-mode button.on { background: #242438; color: #e8e8f0; }
+.cvt-top .cvt-intake { flex: 1; max-width: 480px; margin: 0 auto; }
+.cvt-launcher { position: fixed; right: 14px; bottom: 64px; z-index: 1100; display: flex;
+  align-items: center; gap: 7px; background: #5b5bd6; color: #fff; border: 0; border-radius: 10px;
+  padding: 10px 13px; cursor: pointer; font: 600 12px/1 system-ui; box-shadow: 0 6px 18px -6px rgba(0,0,0,.5); }
+.cvt-body { flex: 1; overflow: auto; padding: 1rem 1.2rem; }
+.cvt-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: .7rem; }
+.cvt-card { border: 1px solid #2a2a45; border-radius: 10px; padding: .7rem .9rem; background: #1a1a2b; cursor: pointer; }
+.cvt-card:hover { border-color: #5b5bd6; }
+.cvt-card-focus { font-weight: 600; margin-bottom: .3rem; }
+.cvt-card-meta { display: flex; gap: .6rem; font-size: .8rem; color: #9a9ab0; }
+.cvt-empty { color: #9a9ab0; }
+.cvt-cockpit-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: .6rem; }
+.cvt-link { background: none; border: 0; color: #7ad0ff; cursor: pointer; padding: 0; font: inherit; }
+.cvt-field { display: flex; align-items: center; gap: .4rem; }
+.cvt-edit { cursor: text; border-bottom: 1px dashed transparent; }
+.cvt-edit:hover { border-color: #5b5bd6; }
+.cvt-pencil { background: none; border: 0; color: #9a9ab0; cursor: pointer; font-size: .85em; }
+.cvt-input { width: 100%; padding: .3rem .5rem; border-radius: 6px; border: 1px solid #5b5bd6;
+  background: #14141f; color: inherit; font: inherit; }
+.cvt-list { list-style: none; margin: 0 0 .4rem; padding: 0; }
+.cvt-list li { display: flex; justify-content: space-between; gap: .4rem; padding: .15rem 0; }
+.cvt-x { background: none; border: 0; color: #ff8080; cursor: pointer; font-size: 1em; }
+.cvt-add { width: 100%; padding: .3rem .5rem; border-radius: 6px; border: 1px dashed #2a2a45;
+  background: transparent; color: inherit; font: inherit; }
+.cvt-zona-pronto { border-color: #ffb454; }
+.cvt-chip-amber { background: #3a2c10; color: #ffb454; border-radius: 6px; padding: .1rem .5rem; font-size: .75rem; margin-left: .5rem; }
+.cvt-pronto-row { margin-bottom: .4rem; }
+.cvt-row-label { display: block; font-size: .75rem; color: #9a9ab0; }
+.cvt-ambig { border: 1px solid #ff8080; border-radius: 10px; padding: .7rem 1rem; margin-bottom: .8rem;
+  display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.cvt-ambig-btn { padding: .3rem .8rem; border-radius: 6px; border: 1px solid #ff8080; background: transparent; color: #ff8080; cursor: pointer; }
+.cvt-badge { border-radius: 6px; padding: .15rem .6rem; font-size: .75rem; }
+.cvt-badge-ok { background: #123a1e; color: #9ef0a0; }
+.cvt-badge-bad { background: #3a1414; color: #ff8080; }
+.cvt-status-bad { color: #ff8080; }
+.cvt-brief-pre { white-space: pre-wrap; background: #0f0f18; border: 1px solid #2a2a45; border-radius: 8px;
+  padding: .7rem; max-height: 260px; overflow: auto; }
+.cvt-btn { padding: .5rem 1rem; border-radius: 8px; border: 1px solid #2a2a45; background: #1c1c2e; color: inherit; cursor: pointer; margin-right: .5rem; }
+.cvt-btn-primary { background: #5b5bd6; border-color: #5b5bd6; color: #fff; }
