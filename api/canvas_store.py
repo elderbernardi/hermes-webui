@@ -31,6 +31,8 @@ _MINIMAL = {
     "gaps": [], "dependencies": [], "risks": [], "next_moves": [],
     "shape": "tarefa", "done_criteria": "", "verification": "",
     "scope": [], "assumptions": [], "authorization": [],
+    "personas": {"suggested": [], "explicit": [], "evaluators": []},
+    "acervo_aplicado": [],
 }
 
 

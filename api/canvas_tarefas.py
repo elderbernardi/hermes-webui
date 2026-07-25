@@ -33,6 +33,7 @@ _WHITELIST_RAW = (
     "/verification", "/microversos/primary", "/microversos/related/*",
     "/gaps/*", "/scope/*", "/assumptions/*", "/artifacts/expected/*",
     "/next_moves/*",
+    "/personas/suggested/*", "/acervo_aplicado/*",
 )
 
 
