@@ -3,6 +3,9 @@ import time
 import pytest
 
 from api import canvas_curador, curador_a2a as a2a
+import io
+import json as _json
+from urllib.parse import urlparse
 
 
 @pytest.fixture()
@@ -113,3 +116,119 @@ def test_gap_emitido_e_failed(curador_env, monkeypatch):
 def test_call_llm_curator_usa_seam(curador_env, monkeypatch):
     monkeypatch.setenv("CURADOR_LLM_CMD", "printf 'resposta-do-stub'")
     assert canvas_curador._call_llm_curator("prompt qualquer") == "resposta-do-stub"
+
+
+class _OneShotStream:
+    """Handler fake p/ SSE: captura frames e aborta o loop após o 1º batch
+    (BrokenPipeError no flush quando já há um frame 'event:' escrito)."""
+    def __init__(self):
+        self._buf = bytearray()
+        self.status = None
+        self.frames = b""
+        outer = self
+
+        class _W:
+            def write(self, b):
+                outer._buf.extend(b)
+            def flush(self):
+                outer.frames = bytes(outer._buf)
+                if b"event:" in outer.frames:
+                    raise BrokenPipeError
+        self.wfile = _W()
+
+    def send_response(self, c): self.status = c
+    def send_header(self, *a): pass
+    def end_headers(self): pass
+
+
+class FakeHandler:
+    def __init__(self):
+        self.wfile = io.BytesIO()
+        self.status = None
+    def send_response(self, c): self.status = c
+    def send_header(self, *a): pass
+    def end_headers(self): pass
+
+
+def test_delegar_endpoint_retorna_id(curador_env, monkeypatch):
+    monkeypatch.setattr(canvas_curador, "_run_skill",
+                        lambda task: (a2a.new_artifact(name="n", description="d",
+                                      data={"tipo": "buscar_acervo", "path": "p"}), None))
+    h = FakeHandler()
+    assert canvas_curador.handle_curador_post(
+        h, "/api/canvas/curador/delegar",
+        {"canvas_id": "c", "kind": "buscar_acervo", "query": "q"}) is True
+    did = _json.loads(h.wfile.getvalue())["delegacao_id"]
+    assert did.startswith("curador_task_")
+
+
+def test_delegar_kind_invalido_400(curador_env):
+    h = FakeHandler()
+    canvas_curador.handle_curador_post(h, "/api/canvas/curador/delegar",
+                                       {"canvas_id": "c", "kind": "nope"})
+    assert h.status == 400
+
+
+def test_pesquisar_desabilitado_por_default_400(curador_env, monkeypatch):
+    monkeypatch.delenv("CURADOR_ENABLE_PESQUISAR", raising=False)
+    h = FakeHandler()
+    canvas_curador.handle_curador_post(h, "/api/canvas/curador/delegar",
+                                       {"canvas_id": "c", "kind": "pesquisar", "tema": "x"})
+    assert h.status == 400
+
+
+def test_allow_scopes_validado_server_side(curador_env):
+    # 'comercial' existe (fixture criou micro/comercial); 'fantasma' não
+    assert canvas_curador._valid_allow_scopes(["comercial"]) is True
+    assert canvas_curador._valid_allow_scopes(["fantasma"]) is False
+    assert canvas_curador._valid_allow_scopes("comercial") is False
+    h = FakeHandler()
+    canvas_curador.handle_curador_post(
+        h, "/api/canvas/curador/delegar",
+        {"canvas_id": "c", "kind": "buscar_acervo", "query": "q",
+         "allow_scopes": ["fantasma"]})
+    assert h.status == 400
+
+
+def test_path_desconhecido_retorna_false(curador_env):
+    assert canvas_curador.handle_curador_post(FakeHandler(), "/api/outro", {}) is False
+    assert canvas_curador.handle_curador_get(
+        FakeHandler(), urlparse("/api/outro")) is False
+
+
+def test_stream_replay_por_cursor(curador_env):
+    canvas_curador._emit("c", "curador_status", {"estado": "working"})
+    canvas_curador._emit("c", "curador_sugestao", {"path": "p"})
+    h = _OneShotStream()
+    canvas_curador._stream_events(h, canvas_curador._room("c"), 0)
+    assert b"event: curador_status" in h.frames
+    assert b"event: curador_sugestao" in h.frames
+    assert b"id: 1" in h.frames and b"id: 2" in h.frames
+
+
+def test_job_endpoint_reporta_estado(curador_env, monkeypatch):
+    monkeypatch.setattr(canvas_curador, "_run_skill",
+                        lambda task: (a2a.new_artifact(name="n", description="d",
+                                      data={"tipo": "buscar_acervo", "path": "p"}), None))
+    tid = canvas_curador.delegar("c", "buscar_acervo", query="q")
+    _wait_state(tid, "completed")
+    h = FakeHandler()
+    canvas_curador.handle_curador_get(h, urlparse(f"/api/canvas/curador/job?delegacao_id={tid}"))
+    body = _json.loads(h.wfile.getvalue())
+    assert body["state"] == "completed" and "hygiene" in body
+
+
+def test_forward_via_canvas_tarefas(curador_env, monkeypatch):
+    # achado #2: /api/canvas/curador/* é despachado pelo forward em canvas_tarefas.py
+    # (routes.py intocado). O forward chega ao MESMO módulo canvas_curador.
+    from api import canvas_tarefas
+    monkeypatch.setattr(canvas_curador, "_run_skill",
+                        lambda task: (a2a.new_artifact(name="n", description="d",
+                                      data={"tipo": "buscar_acervo", "path": "p"}), None))
+    h = FakeHandler()
+    assert canvas_tarefas.handle_canvas_post(
+        h, "/api/canvas/curador/delegar",
+        {"canvas_id": "c", "kind": "buscar_acervo", "query": "q"}) is True
+    assert _json.loads(h.wfile.getvalue())["delegacao_id"].startswith("curador_task_")
+    # path não-curador ainda cai no handler nativo do canvas (não é forwardado)
+    assert canvas_tarefas.handle_canvas_post(FakeHandler(), "/api/outro", {}) is False

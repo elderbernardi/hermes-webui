@@ -276,6 +276,9 @@ def _handle_launch(handler, body: dict) -> None:
 
 
 def handle_canvas_post(handler, path: str, body: dict) -> bool:
+    if path.startswith("/api/canvas/curador/"):   # MOD-013 (F2): forward ao Curador
+        from api.canvas_curador import handle_curador_post
+        return handle_curador_post(handler, path, body)
     if path == "/api/canvas/patch":
         _handle_patch(handler, body)
         return True
@@ -361,6 +364,9 @@ def _stream_events(handler, job: dict, cursor: int) -> None:
 
 
 def handle_canvas_get(handler, parsed) -> bool:
+    if parsed.path.startswith("/api/canvas/curador/"):   # MOD-013 (F2): forward ao Curador
+        from api.canvas_curador import handle_curador_get
+        return handle_curador_get(handler, parsed)
     if parsed.path == "/api/canvas/get":
         cid = (parse_qs(parsed.query).get("canvas_id") or [""])[0]
         try:

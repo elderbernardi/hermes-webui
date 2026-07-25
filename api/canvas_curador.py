@@ -180,3 +180,101 @@ def delegar(canvas_id: str, kind: str, *, query=None, escopo=None, tema=None,
         _QUEUE.append(task["id"])
     _pump()
     return task["id"]
+
+
+def _valid_allow_scopes(scopes) -> bool:
+    """Firewall de sharing validado SERVER-SIDE (achado M3): cada allow_scope tem
+    de ser um microverso conhecido em disco. A única invariante estrutural é
+    sensitivity:restricted (deny-sempre, dentro do retrieve); cross-scope é
+    decisão do chamador single-user. Nunca confia na lista do cliente."""
+    if not isinstance(scopes, list):
+        return False
+    try:
+        micro = canvas_store.acervo_root() / "micro"
+        known = {p.name for p in micro.iterdir()
+                 if p.is_dir() and not p.name.startswith(("_", "."))} if micro.is_dir() else set()
+    except Exception:
+        known = set()
+    return all(isinstance(s, str) and s in known for s in scopes)
+
+
+def _stream_events(handler, room: dict, cursor: int) -> None:
+    """SSE re-anexável. Diferente do enquadrador, NÃO fecha em evento terminal —
+    a sala do Curador serve N delegações ao longo da sessão; o stream só encerra
+    quando o cliente desconecta. Resolve o obstáculo F1b 'stream fecha em canvas_done'."""
+    handler.send_response(200)
+    handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
+    handler.send_header("Cache-Control", "no-cache")
+    handler.end_headers()
+    try:
+        while True:
+            with room["cond"]:
+                room["cond"].wait_for(lambda: len(room["events"]) > cursor, timeout=30)
+                pending = room["events"][cursor:]
+            if not pending:
+                handler.wfile.write(b": keepalive\n\n")
+                handler.wfile.flush()
+                continue
+            frames = []
+            for name, payload in pending:
+                cursor += 1
+                data = json.dumps(payload, ensure_ascii=False)
+                frames.append(f"id: {cursor}\nevent: {name}\ndata: {data}\n\n")
+            handler.wfile.write("".join(frames).encode("utf-8"))
+            handler.wfile.flush()
+    except (BrokenPipeError, ConnectionResetError):
+        pass
+
+
+def handle_curador_post(handler, path, body) -> bool:
+    if path != "/api/canvas/curador/delegar":
+        return False
+    cid = body.get("canvas_id") or ""
+    kind = body.get("kind") or ""
+    if kind not in ("buscar_acervo", "sugerir_itens", "pesquisar"):
+        _j(handler, {"error": "kind inválido"}, 400)
+        return True
+    if kind == "pesquisar" and os.environ.get("CURADOR_ENABLE_PESQUISAR") != "1":
+        _j(handler, {"error": "pesquisar desabilitado (CURADOR_ENABLE_PESQUISAR)"}, 400)
+        return True
+    allow = body.get("allow_scopes") or []
+    if not _valid_allow_scopes(allow):
+        _j(handler, {"error": "allow_scopes inválido"}, 400)
+        return True
+    try:
+        canvas_store.load_canvas(cid)
+    except Exception:
+        _j(handler, {"error": "canvas desconhecido"}, 404)
+        return True
+    did = delegar(cid, kind, query=body.get("query"), escopo=body.get("escopo"),
+                  tema=body.get("tema"), allow_scopes=allow)
+    _j(handler, {"delegacao_id": did})
+    return True
+
+
+def handle_curador_get(handler, parsed) -> bool:
+    if parsed.path == "/api/canvas/curador/stream":
+        qs = parse_qs(parsed.query)
+        cid = (qs.get("canvas_id") or [""])[0]
+        try:
+            cursor = int((qs.get("since") or ["0"])[0])
+        except (TypeError, ValueError):
+            cursor = 0
+        if cursor < 0:
+            cursor = 0
+        _stream_events(handler, _room(cid), cursor)
+        return True
+    if parsed.path == "/api/canvas/curador/job":
+        qs = parse_qs(parsed.query)
+        did = (qs.get("delegacao_id") or [""])[0]
+        task = _STORE.get(did)
+        if task is None:
+            _j(handler, {"error": "delegação desconhecida"}, 404)
+            return True
+        m = task["metadata"]
+        _j(handler, {"state": task["status"]["state"],
+                     "empty_lookups": m.get("empty_lookups", 0),
+                     "attempts": m.get("attempts", 0),
+                     "hygiene": m.get("hygiene", {})})
+        return True
+    return False
