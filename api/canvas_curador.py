@@ -137,7 +137,11 @@ def _run_curador(task_id: str) -> None:
         transition(task, "working")
         _emit(cid, "curador_status", {"delegacao_id": task_id, "estado": "working"})
         artifact, gap = _run_skill(task)
+        if artifact is not None and not _fit_ok(artifact["parts"][0]["data"]):
+            artifact, gap = None, "Curador não achou citação verificável"   # Bound 3
         if artifact is not None:
+            artifact = _budget_guard(artifact)                              # P11 no boundary
+            _ledger_emit(task, artifact["parts"][0]["data"])
             _emit(cid, "curador_sugestao", artifact)
             transition(task, "completed")
             _emit(cid, "curador_status", {"delegacao_id": task_id, "estado": "completed"})
@@ -278,3 +282,90 @@ def handle_curador_get(handler, parsed) -> bool:
                      "hygiene": m.get("hygiene", {})})
         return True
     return False
+
+
+ARTIFACT_BUDGET_N = 700    # teto de tokens do destilado que cruza a fronteira (o "N" do gate)
+MAX_ARTIFACTS = 3          # sugerir_itens: no máx. 3 itens
+MAX_FETCHES = 3            # teto duro de buscas por delegação (bounds param antes disso)
+
+_TRUNC_MARK = "[destilado truncado a %d tokens]" % ARTIFACT_BUDGET_N
+
+
+def _tokens_est(obj) -> int:
+    """Heurística chars/4 (sem dep nova), consistente com o --budget do acervoctl."""
+    return len(json.dumps(obj, ensure_ascii=False)) // 4
+
+
+def _budget_guard(artifact: dict) -> dict:
+    """P11 no ponto de emissão: se o artefato > N tokens, comprime UMA vez (turno
+    auxiliar preservando path/fonte) e reconta; se ainda > N, TRUNCA o campo
+    'porque' com marcador. A fronteira nunca deixa passar mais que N."""
+    if _tokens_est(artifact) <= ARTIFACT_BUDGET_N:
+        return artifact
+    data = artifact["parts"][0]["data"]
+    prompt = ("Resuma o JSON abaixo em no máximo %d tokens preservando "
+              "EXATAMENTE os campos 'path'/'fonte'/'fontes'/'tipo'/'nature'. "
+              "Responda SOMENTE com o JSON.\n\n%s"
+              % (ARTIFACT_BUDGET_N, json.dumps(data, ensure_ascii=False)))
+    try:
+        comp = json.loads(_call_llm_curator(prompt))
+        if isinstance(comp, dict):
+            for keep in ("tipo", "nature", "path", "fonte", "fontes"):
+                if keep in data and keep not in comp:
+                    comp[keep] = data[keep]
+            artifact["parts"][0]["data"] = comp
+            data = comp
+    except Exception:
+        pass
+    if _tokens_est(artifact) > ARTIFACT_BUDGET_N:
+        # trunca o campo textual mais volumoso, preservando citação; a base de
+        # cálculo é o artefato INTEIRO (envelope + demais campos), não só 'data',
+        # para não estourar o teto por causa do overhead do envelope A2A.
+        por = str(data.get("porque") or data.get("resumo") or "")
+        data.pop("resumo", None)
+        keep_chars = len(por)
+        data["porque"] = (por[:keep_chars] + " " + _TRUNC_MARK).strip()
+        while _tokens_est(artifact) > ARTIFACT_BUDGET_N and keep_chars > 0:
+            keep_chars = max(0, keep_chars - max(1, (
+                (_tokens_est(artifact) - ARTIFACT_BUDGET_N) * 4)))
+            data["porque"] = (por[:keep_chars] + " " + _TRUNC_MARK).strip()
+        logger.warning("curador: artefato truncado a %d tokens", ARTIFACT_BUDGET_N)
+    return artifact
+
+
+def _fit_ok(data: dict) -> bool:
+    """Bound 3 (fit gate): só emite Artifact com citação verificável."""
+    return bool(data.get("path") or data.get("fonte") or data.get("fontes"))
+
+
+def _bump_empty(task, results_signature: str) -> None:
+    """Bound 1: incrementa empty_lookups em 0-citáveis OU assinatura idêntica à
+    anterior (dedup por path/URL, não por 'relevância')."""
+    m = task["metadata"]
+    prev = m.get("_last_sig")
+    has_baseline = "_last_sig" in m
+    if not results_signature or results_signature == prev or not has_baseline:
+        m["empty_lookups"] = m.get("empty_lookups", 0) + 1
+    m["_last_sig"] = results_signature
+
+
+def _empty_exhausted(task) -> bool:
+    return task["metadata"].get("empty_lookups", 0) >= 2
+
+
+def _bump_attempt(task) -> None:
+    task["metadata"]["attempts"] = task["metadata"].get("attempts", 0) + 1
+
+
+def _attempts_exhausted(task) -> bool:
+    return task["metadata"].get("attempts", 0) >= 3
+
+
+def _ledger_retrieve(task, out: dict) -> None:
+    h = task["metadata"]["hygiene"]
+    h["curador_internal_tokens"] += int(out.get("total_tokens") or 0)
+    h["n_retrieves"] += 1
+
+
+def _ledger_emit(task, payload: dict) -> None:
+    task["metadata"]["hygiene"]["executor_tokens"] += _tokens_est(payload)
