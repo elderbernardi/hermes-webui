@@ -40,6 +40,24 @@ def test_budget_guard_ainda_grande_trunca(monkeypatch):
     assert "[destilado truncado" in out["parts"][0]["data"]["porque"]
 
 
+def test_budget_guard_citations_grande_capa(monkeypatch):
+    # porque pequeno, compressão no-op; citations sozinho estoura N -> o guard
+    # tem de capar a lista para a fronteira nunca deixar passar > N.
+    monkeypatch.setattr(cc, "_call_llm_curator", lambda p: "não é json")  # compress falha
+    big_cites = [f"Acervo: micro/comercial/knowledge/doc-{i}.md" for i in range(400)]
+    big = a2a.new_artifact(name="n", description="d",
+                           data={"tipo": "buscar_acervo",
+                                 "path": "micro/comercial/knowledge/doc-0.md",
+                                 "citations": big_cites, "porque": "curto"})
+    assert cc._tokens_est(big) > cc.ARTIFACT_BUDGET_N     # pré-condição: estoura só por citations
+    out = cc._budget_guard(big)
+    data = out["parts"][0]["data"]
+    assert cc._tokens_est(out) <= cc.ARTIFACT_BUDGET_N
+    assert cc._TRUNC_MARK in data["citations"]            # marcador de corte
+    assert data["path"] == "micro/comercial/knowledge/doc-0.md"  # citação primária preservada
+    assert cc._fit_ok(data) is True                       # fit gate segue satisfeito
+
+
 def test_fit_gate_exige_citacao():
     assert cc._fit_ok({"path": "micro/x/k.md"}) is True
     assert cc._fit_ok({"fontes": ["https://ex.com"]}) is True

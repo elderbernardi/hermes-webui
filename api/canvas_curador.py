@@ -334,6 +334,16 @@ def _budget_guard(artifact: dict) -> dict:
             keep_chars = max(0, keep_chars - max(1, (
                 (_tokens_est(artifact) - ARTIFACT_BUDGET_N) * 4)))
             data["porque"] = (por[:keep_chars] + " " + _TRUNC_MARK).strip()
+        # 'porque' pode zerar e o artefato ainda estourar N se 'citations' (ou
+        # qualquer lista volumosa) for grande sozinho. Cape a lista mantendo as
+        # PRIMEIRAS citações + marcador de corte; 'path' preserva a citação
+        # primária, então o fit gate segue satisfeito.
+        cites = data.get("citations")
+        if isinstance(cites, list) and cites:
+            kept = list(cites)
+            while _tokens_est(artifact) > ARTIFACT_BUDGET_N and kept:
+                kept.pop()
+                data["citations"] = (kept + [_TRUNC_MARK]) if kept else [_TRUNC_MARK]
         logger.warning("curador: artefato truncado a %d tokens", ARTIFACT_BUDGET_N)
     return artifact
 
