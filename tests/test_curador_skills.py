@@ -60,3 +60,35 @@ def test_buscar_acervo_ops_pousam_em_next_moves(skills_env, monkeypatch):
     art, _ = cc._skill_buscar_acervo(_task(query="q", escopo="comercial"))
     ops = art["metadata"]["ops"]
     assert any(o["path"] == "/next_moves/-" for o in ops)
+
+
+def test_sugerir_itens_persona_e_acervo(skills_env, monkeypatch):
+    monkeypatch.setattr(cc, "load_capability_card", lambda slug: {
+        "name": "comercial", "skills": [
+            {"id": "comercial/persona", "name": "persona", "count": 1,
+             "examples": ["persona/negociador.md"], "porque": "negociação dura"}]})
+    monkeypatch.setattr(cc, "curador_posture", lambda q, s, **k: {
+        "found": True, "total_tokens": 300,
+        "items": [{"header": "template de ofício", "content": "...",
+                   "path": "micro/comercial/templates/oficio.md", "tokens_est": 120}],
+        "citations": ["Acervo: micro/comercial/templates/oficio.md"]})
+    monkeypatch.setattr(cc, "_call_llm_curator", lambda p: json.dumps({"itens": [
+        {"nature": "persona", "titulo": "negociador",
+         "path": "micro/comercial/persona/negociador.md", "porque": "negociação dura"},
+        {"nature": "template", "titulo": "ofício",
+         "path": "micro/comercial/templates/oficio.md", "porque": "modelo pronto"}]}))
+    art, gap = cc._skill_sugerir_itens(_task(skill="sugerir_itens"))
+    assert gap is None
+    data = art["parts"][0]["data"]
+    assert data["nature"] == "persona"
+    assert art["metadata"]["ops"][0]["path"] == "/personas/suggested/-"
+
+
+def test_sugerir_itens_fit_gate_descarta_sem_path(skills_env, monkeypatch):
+    monkeypatch.setattr(cc, "load_capability_card", lambda slug: None)
+    monkeypatch.setattr(cc, "curador_posture", lambda q, s, **k: {
+        "found": True, "total_tokens": 10, "items": [], "citations": []})
+    monkeypatch.setattr(cc, "_call_llm_curator", lambda p: json.dumps({"itens": [
+        {"nature": "skill", "titulo": "boa ideia", "porque": "sem path"}]}))
+    art, gap = cc._skill_sugerir_itens(_task(skill="sugerir_itens"))
+    assert art is None and gap                      # nenhum item citável -> gap

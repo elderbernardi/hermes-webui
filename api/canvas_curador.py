@@ -437,3 +437,66 @@ def _skill_buscar_acervo(task) -> tuple[dict | None, str | None]:
 
 
 _SKILLS["buscar_acervo"] = _skill_buscar_acervo
+
+
+_SUGERIR_PROMPT = """Você é o Curador (role auxiliar). Dadas as capacidades do
+microverso e os candidatos rankeados, sugira até {n} itens (persona|template|skill|
+workflow) úteis à tarefa. Cada item: {{"nature","titulo","path","porque"}}. Use SÓ
+paths presentes nos candidatos; NUNCA invente path. Responda SOMENTE com
+{{"itens": [...]}}.
+
+Capacidades do microverso: {card}
+Candidatos (posture): {candidatos}
+Foco da tarefa: {focus}
+"""
+
+
+def _op_for_item(item: dict) -> dict | None:
+    """persona -> /personas/suggested/-; demais -> /acervo_aplicado/- ({path,nature,porque})."""
+    nature = (item.get("nature") or "").lower()
+    if nature == "persona":
+        return {"op": "add", "path": "/personas/suggested/-",
+                "value": item.get("titulo") or item.get("path")}
+    return {"op": "add", "path": "/acervo_aplicado/-",
+            "value": {"path": item.get("path"), "nature": nature,
+                      "porque": item.get("porque", "")}}
+
+
+def _skill_sugerir_itens(task) -> tuple[dict | None, str | None]:
+    cid = task["contextId"]
+    canvas = canvas_store.load_canvas(cid)
+    scope = _primary_scope(canvas, task["metadata"]["args"].get("escopo"))
+    card = load_capability_card(scope) or {}         # OFF-TRAIL cache (decisão b); só leitura
+    out = curador_posture(canvas.get("focus", "") or "sugerir itens", scope,
+                          mode="decision", budget=POSTURE_BUDGET, k=8)
+    _ledger_retrieve(task, out)
+    candidatos = [{"header": i.get("header"), "path": i.get("path")}
+                  for i in (out.get("items") or [])]
+    try:
+        parsed = json.loads(_call_llm_curator(_SUGERIR_PROMPT.format(
+            n=MAX_ARTIFACTS, card=json.dumps(card, ensure_ascii=False)[:1500],
+            candidatos=json.dumps(candidatos, ensure_ascii=False)[:1500],
+            focus=canvas.get("focus", ""))))
+        itens = [i for i in (parsed.get("itens") or []) if _fit_ok(i)][:MAX_ARTIFACTS]
+    except Exception:
+        itens = []
+    if not itens:
+        return (None, "Curador não encontrou itens citáveis para sugerir")
+    arts = []
+    for it in itens:
+        op = _op_for_item(it)
+        data = {"tipo": "sugerir_itens", "nature": it.get("nature"),
+                "path": it.get("path"), "porque": it.get("porque", ""),
+                "fonte": "acervoctl posture", "trust": "trusted"}
+        arts.append(a2a.new_artifact(name="sugestao_%s" % it.get("nature"),
+                    description=(it.get("porque") or "")[:120], data=data,
+                    ops=[op] if op else []))
+    # emite os itens EXTRA já pelo boundary (com budget guard + ledger); retorna o 1º
+    for extra in arts[1:]:
+        extra = _budget_guard(extra)
+        _ledger_emit(task, extra["parts"][0]["data"])
+        _emit(cid, "curador_sugestao", extra)
+    return (arts[0], None)
+
+
+_SKILLS["sugerir_itens"] = _skill_sugerir_itens
