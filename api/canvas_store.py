@@ -18,7 +18,9 @@ import yaml
 _LOCK = threading.Lock()
 _TEMPLATE_REL = "global/templates/harness-v0.4/canvas.yaml"
 # Sufixo determinístico de unicidade (sem random/Date.now — regra do harness):
-# pid (3 dígitos) + contador incremental de módulo (2 dígitos, wrap em 100).
+# pid (3 dígitos) + contador incremental de módulo (>=2 dígitos, sem módulo/
+# wraparound — cresce além de 2 dígitos após 100 create_draft no mesmo
+# processo; tolerado pelo regex {5,} em _canvas_path, nunca colide).
 _SEQ = itertools.count()
 
 _MINIMAL = {
@@ -50,12 +52,12 @@ def tasks_dir() -> Path:
 
 def new_canvas_id(slug: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", slug.lower()).strip("-")[:40] or "tarefa"
-    suffix = f"{os.getpid() % 1000:03d}{next(_SEQ) % 100:02d}"
+    suffix = f"{os.getpid() % 1000:03d}{next(_SEQ):02d}"
     return f"canvas_{time.strftime('%Y%m%d_%H%M%S')}_{slug}_{suffix}"
 
 
 def _canvas_path(canvas_id: str) -> Path:
-    if not re.fullmatch(r"canvas_[0-9]{8}_[0-9]{6}_[a-z0-9-]+_[0-9]{5}", canvas_id):
+    if not re.fullmatch(r"canvas_[0-9]{8}_[0-9]{6}_[a-z0-9-]+_[0-9]{5,}", canvas_id):
         raise ValueError(f"canvas_id inválido: {canvas_id!r}")
     d = tasks_dir() / canvas_id
     return d / "canvas.yaml"
