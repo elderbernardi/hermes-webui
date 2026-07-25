@@ -69,3 +69,41 @@ def test_leitores_alias_tolerantes():
     assert a2a.part_kind({"kind": "text"}) == "text"       # canônico
     assert a2a.context_id({"sessionId": "s"}) == "s"       # alias
     assert a2a.context_id({"contextId": "c"}) == "c"       # canônico
+
+
+import json
+import pathlib
+
+
+def _shapes():
+    p = pathlib.Path(__file__).parent / "fixtures" / "a2a-shapes.json"
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def test_conformance_estados_hifenizados():
+    spec = _shapes()
+    assert set(a2a._VALID.keys()) == set(spec["task_states"])
+    for composto in spec["hyphenated_states"]:
+        assert composto in a2a._VALID          # hifenizado, nunca underscore
+        assert composto.replace("-", "_") not in a2a._VALID
+
+
+def test_conformance_campos_obrigatorios():
+    spec = _shapes()
+    t = a2a.new_task(contextId="c", skill="buscar_acervo", budget_tokens=1)
+    assert set(spec["task_required_fields"]).issubset(t.keys())
+    assert set(spec["status_required_fields"]).issubset(t["status"].keys())
+    m = a2a.new_message(role="user", skill="buscar_acervo", task_id=t["id"])
+    assert set(spec["message_required_fields"]).issubset(m.keys())
+    art = a2a.new_artifact(name="n", description="d", data={"tipo": "x"})
+    assert set(spec["artifact_required_fields"]).issubset(art.keys())
+
+
+def test_conformance_part_kind_e_context_id_canonicos():
+    spec = _shapes()
+    t = a2a.new_task(contextId="c", skill="buscar_acervo", budget_tokens=1)
+    art = a2a.new_artifact(name="n", description="d", data={"tipo": "x"})
+    assert a2a.part_kind(art["parts"][0]) in spec["part_kinds"]
+    assert "kind" in art["parts"][0]           # emitimos "kind" canônico
+    assert "contextId" in t                     # emitimos "contextId" canônico
+    assert "sessionId" not in t
