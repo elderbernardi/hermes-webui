@@ -92,3 +92,44 @@ def test_sugerir_itens_fit_gate_descarta_sem_path(skills_env, monkeypatch):
         {"nature": "skill", "titulo": "boa ideia", "porque": "sem path"}]}))
     art, gap = cc._skill_sugerir_itens(_task(skill="sugerir_itens"))
     assert art is None and gap                      # nenhum item citável -> gap
+
+
+def test_pesquisar_sintese_com_fontes(skills_env, monkeypatch):
+    monkeypatch.setenv("CURADOR_ENABLE_PESQUISAR", "1")
+    monkeypatch.setattr(cc, "_web_search", lambda q: [
+        {"title": "Preços 2026", "url": "https://ex.example.com/a", "snippet": "..."}])
+    monkeypatch.setattr(cc, "_call_llm_curator", lambda p: json.dumps(
+        {"sintese": "mercado subiu 3%", "suficiente": True}))
+    art, gap = cc._skill_pesquisar(_task(skill="pesquisar", tema="preços de mercado"))
+    assert gap is None
+    data = art["parts"][0]["data"]
+    assert data["trust"] == "untrusted"
+    assert data["fontes"] == ["https://ex.example.com/a"]
+    # ops de pesquisar só podem tocar /gaps/-
+    for op in art["metadata"]["ops"]:
+        assert op["path"] == "/gaps/-"
+
+
+def test_pesquisar_bound1_duas_buscas_vazias_vira_gap(skills_env, monkeypatch):
+    monkeypatch.setenv("CURADOR_ENABLE_PESQUISAR", "1")
+    calls = {"n": 0}
+    monkeypatch.setattr(cc, "_web_search",
+                        lambda q: (calls.__setitem__("n", calls["n"] + 1), [])[1])
+    monkeypatch.setattr(cc, "_call_llm_curator", lambda p: json.dumps(
+        {"sintese": "", "suficiente": False, "refinar": "outra query"}))
+    t = _task(skill="pesquisar", tema="tema obscuro")
+    art, gap = cc._skill_pesquisar(t)
+    assert art is None and gap
+    assert calls["n"] == 2 and cc._empty_exhausted(t)
+
+
+def test_pesquisar_mascara_segredos_em_fontes(skills_env, monkeypatch):
+    monkeypatch.setenv("CURADOR_ENABLE_PESQUISAR", "1")
+    monkeypatch.setattr(cc, "_web_search", lambda q: [
+        {"title": "t", "url": "https://ex.example.com/x?api_key=SEGREDO123&z=1",
+         "snippet": "s"}])
+    monkeypatch.setattr(cc, "_call_llm_curator", lambda p: json.dumps(
+        {"sintese": "ok", "suficiente": True}))
+    art, _ = cc._skill_pesquisar(_task(skill="pesquisar", tema="x"))
+    assert "SEGREDO123" not in json.dumps(art)
+    assert "api_key=***" in art["parts"][0]["data"]["fontes"][0]

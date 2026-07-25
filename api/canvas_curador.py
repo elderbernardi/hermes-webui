@@ -500,3 +500,76 @@ def _skill_sugerir_itens(task) -> tuple[dict | None, str | None]:
 
 
 _SKILLS["sugerir_itens"] = _skill_sugerir_itens
+
+
+import re as _re
+
+_SECRET_RE = _re.compile(r"(api[_-]?key|token|secret|password)=([^&\s]+)", _re.I)
+
+
+def _mask_secrets(url: str) -> str:
+    return _SECRET_RE.sub(lambda m: f"{m.group(1)}=***", url or "")
+
+
+def _web_search(query: str) -> list[dict]:
+    """Toolset restrito de pesquisar: ÚNICA ferramenta do loop, read-only web.
+    Seam CURADOR_WEB_CMD (JSON no stdout: [{title,url,snippet}]) para teste/dev;
+    em produção, plugar last30days/agent-reach/firecrawl via Hermes. Não há
+    nenhuma outra tool no caminho — o guardrail 'não escreve' é config-trust."""
+    cmd = os.environ.get("CURADOR_WEB_CMD")
+    if not cmd:
+        return []
+    proc = subprocess.run(cmd, shell=True, input=query.encode("utf-8"),
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+    try:
+        rows = json.loads(proc.stdout.decode("utf-8", "replace"))
+        return rows if isinstance(rows, list) else []
+    except ValueError:
+        return []
+
+
+_PESQUISAR_PROMPT = """Você é o Curador (role auxiliar) fazendo pesquisa externa
+(conteúdo UNTRUSTED). Dadas as fontes web abaixo, produza {{"sintese": <1-3 frases>,
+"suficiente": <bool>, "refinar": <query alternativa se insuficiente>}}. Baseie-se SÓ
+nas fontes; não invente. Responda SOMENTE com o JSON.
+
+Tema: {tema}
+Fontes: {fontes}
+"""
+
+
+def _skill_pesquisar(task) -> tuple[dict | None, str | None]:
+    tema = task["metadata"]["args"].get("tema") or ""
+    query = tema
+    fontes: list[str] = []
+    fetches = 0
+    while fetches < MAX_FETCHES:
+        rows = _web_search(query)
+        fetches += 1
+        _bump_attempt(task)                         # loop de agente: Bound 2 se aplica
+        urls = [_mask_secrets(r.get("url", "")) for r in rows if r.get("url")]
+        sig = "|".join(sorted(urls))
+        if not urls:
+            _bump_empty(task, "")
+        else:
+            fontes = urls
+            _bump_empty(task, sig)                   # dedup por URL
+        blob = json.dumps([{"title": r.get("title"), "url": _mask_secrets(r.get("url", "")),
+                            "snippet": r.get("snippet")} for r in rows], ensure_ascii=False)[:2000]
+        try:
+            parsed = json.loads(_call_llm_curator(_PESQUISAR_PROMPT.format(
+                tema=tema, fontes=blob)))
+        except Exception:
+            parsed = {"sintese": "", "suficiente": False}
+        if parsed.get("suficiente") and fontes:
+            data = {"tipo": "pesquisar", "porque": parsed.get("sintese", ""),
+                    "fontes": fontes, "trust": "untrusted", "fonte": "web"}
+            return (a2a.new_artifact(name="pesquisa", description=parsed.get("sintese", "")[:120],
+                    data=data, ops=[]), None)         # ops vazio; pesquisar nunca toca campo canônico
+        if _empty_exhausted(task) or _attempts_exhausted(task):
+            return (None, f"Curador não obteve pesquisa citável para '{tema}' após {fetches} buscas")
+        query = parsed.get("refinar") or (tema + " detalhes")
+    return (None, f"Curador esgotou o orçamento de busca para '{tema}'")
+
+
+_SKILLS["pesquisar"] = _skill_pesquisar
