@@ -19,10 +19,12 @@ _TEMPLATE_REL = "global/templates/harness-v0.4/canvas.yaml"
 
 _MINIMAL = {
     "canvas_id": "", "focus": "", "original_input_summary": "",
-    "vector": "evolucao", "intent_type": "explorar",
+    "vetor": "evolucao", "intent_type": "explorar",
     "user_intention": {"explicit": "", "inferred": "", "confidence": "medium"},
     "microversos": {"primary": None, "related": []},
     "gaps": [], "dependencies": [], "risks": [], "next_moves": [],
+    "shape": "tarefa", "done_criteria": "", "verification": "",
+    "scope": [], "assumptions": [], "authorization": [],
 }
 
 
@@ -76,7 +78,10 @@ def save_canvas(canvas_id: str, canvas: dict) -> None:
 
 
 def load_canvas(canvas_id: str) -> dict:
-    return yaml.safe_load(_canvas_path(canvas_id).read_text(encoding="utf-8"))
+    doc = yaml.safe_load(_canvas_path(canvas_id).read_text(encoding="utf-8"))
+    if "vector" in doc and "vetor" not in doc:
+        doc["vetor"] = doc.pop("vector")
+    return doc
 
 
 # --- subset RFC 6902: add / replace / remove --------------------------------
@@ -116,13 +121,16 @@ def apply_patch(canvas: dict, ops: list[dict]) -> dict:
     return canvas
 
 
-# --- mapeador núcleo (schema v0.4, chave `vetor`) → documento (template, `vector`)
+# --- mapeador núcleo (schema v0.5) → documento (mapa-identidade em `vetor`)
 
 _CORE_TO_DOC = {
     "focus": "/focus",
-    "vetor": "/vector",
+    "vetor": "/vetor",
     "intent_type": "/intent_type",
     "microverso_primary": "/microversos/primary",
+    "shape": "/shape",
+    "done_criteria": "/done_criteria",
+    "verification": "/verification",
 }
 
 
