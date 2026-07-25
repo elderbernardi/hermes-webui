@@ -56,6 +56,8 @@ docs/*
 !docs/acervo-studio/**
 !docs/hw1/
 !docs/hw1/**
+!docs/curador/
+!docs/curador/**
 
 # Local-only AI assistant context — never committed even under docs/.
 docs/AGENTS.md
