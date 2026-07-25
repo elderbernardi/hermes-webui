@@ -245,3 +245,43 @@ def test_patch_path_com_newline_injetado_rejeitado(acervo):
         "ops": [{"op": "replace", "path": "/focus\n", "value": "hack"}]})
     assert h.status == 400
     assert json.loads(h.wfile.getvalue())["error"] == "path não editável"
+
+
+def test_launch_cria_task_sessao_e_attachments(acervo, monkeypatch, tmp_path):
+    from api import canvas_store
+    cid, doc = canvas_store.create_draft("Renegociar Alfa")
+    doc.update({"focus": "Renegociar Alfa", "vetor": "execucao",
+                "intent_type": "produzir"})
+    canvas_store.save_canvas(cid, doc)
+    canvas_tarefas.CANVAS_JOBS[cid] = canvas_tarefas._new_job()
+
+    class FakeSession:
+        session_id = "sess123"
+
+    monkeypatch.setattr(canvas_tarefas, "_new_session", lambda: FakeSession())
+    monkeypatch.setattr(canvas_tarefas, "_stage_file",
+                        lambda sid, p: {"name": p.name, "path": str(p),
+                                        "size": p.stat().st_size,
+                                        "mime": "text/plain", "is_image": False})
+    reg = {"called": False}
+
+    def fake_register(canvas_path, title):
+        reg["called"] = True
+        return "task_20260724_renegociar-alfa_120000"
+
+    monkeypatch.setattr(canvas_tarefas, "_register_task", fake_register)
+    h = FakeHandler()
+    assert canvas_tarefas.handle_canvas_post(h, "/api/canvas/launch",
+                                             {"canvas_id": cid})
+    body = json.loads(h.wfile.getvalue())
+    assert body["session_id"] == "sess123" and reg["called"]
+    assert len(body["attachments"]) == 2 and "Renegociar Alfa" in body["brief"]
+
+
+def test_launch_ambiguo_400(acervo):
+    from api import canvas_store
+    cid, doc = canvas_store.create_draft("x")
+    doc["vetor"] = "ambiguo"; canvas_store.save_canvas(cid, doc)
+    h = FakeHandler()
+    canvas_tarefas.handle_canvas_post(h, "/api/canvas/launch", {"canvas_id": cid})
+    assert h.status == 400

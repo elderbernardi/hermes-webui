@@ -158,9 +158,114 @@ def _handle_patch(handler, body: dict) -> None:
     _j(handler, {"ok": True, "valid": valid, "errors": errors})
 
 
+def _new_session():
+    """Seam fino sobre `api.models.new_session` — import tardio: mantém o
+    boot do módulo barato e permite monkeypatch em teste sem puxar o
+    api.models (pesado) para dentro do processo de teste."""
+    from api.models import new_session
+    return new_session()
+
+
+_STAGE_MIME = {".md": "text/markdown", ".yaml": "text/yaml", ".yml": "text/yaml"}
+
+
+def _stage_file(session_id: str, path) -> dict:
+    """Seam fino sobre `api.upload._upload_destination` — copia os bytes de
+    `path` para o diretório de upload da sessão. Import tardio pelo mesmo
+    motivo do `_new_session`; mesmo shape de attachment do endpoint de
+    upload (name/path/size/mime/is_image)."""
+    from api.upload import _upload_destination
+    dest = _upload_destination(session_id, path.name)
+    dest.write_bytes(path.read_bytes())
+    mime = _STAGE_MIME.get(path.suffix.lower(), "application/octet-stream")
+    return {"name": dest.name, "path": str(dest), "size": dest.stat().st_size,
+            "mime": mime, "is_image": False}
+
+
+def _register_task(canvas_path, title: str) -> str:
+    """Seam fino: registra a tarefa rodando `register_task_from_canvas.py`
+    como subprocesso (script vive no acervo real, fora deste worktree).
+    Levanta exceção em qualquer falha — o handler traduz em 500."""
+    import os
+    import subprocess
+    import sys
+
+    script = canvas_store.acervo_root() / "global/tools/harness/register_task_from_canvas.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--canvas", str(canvas_path), "--title", title],
+        env={**os.environ, "ACERVO": str(canvas_store.acervo_root())},
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr[-200:])
+    m = re.search(r"task_id:\s*(\S+)", result.stdout)
+    if m:
+        return m.group(1)
+    # Fallback: script rodou ok mas não imprimiu "task_id: ..." no formato
+    # esperado — pega o task_* mais recente em disco.
+    candidates = sorted(canvas_store.tasks_dir().glob("task_*"),
+                        key=lambda p: p.name, reverse=True)
+    if candidates:
+        return candidates[0].name
+    raise RuntimeError("register não produziu task_id e nenhum task_* em disco")
+
+
+def _update_links(task_id: str, session_id: str) -> None:
+    """Append simples (não reserializa) do session_id no links.yaml da task
+    recém-registrada — cria o arquivo/diretório se ainda não existirem
+    (cobre o teste, onde `_register_task` é mockado e não cria nada em
+    disco)."""
+    task_dir = canvas_store.tasks_dir() / task_id
+    task_dir.mkdir(parents=True, exist_ok=True)
+    with (task_dir / "links.yaml").open("a", encoding="utf-8") as f:
+        f.write(f"session_id: {session_id}\n")
+
+
+def _handle_launch(handler, body: dict) -> None:
+    cid = body.get("canvas_id") or ""
+    try:
+        doc = canvas_store.load_canvas(cid)
+    except Exception:
+        _j(handler, {"error": "canvas desconhecido"}, 404)
+        return
+    try:
+        brief = canvas_brief.compile_brief(doc)
+    except ValueError as exc:
+        _j(handler, {"error": str(exc)}, 400)
+        return
+
+    canvas_dir = canvas_store.tasks_dir() / cid
+    canvas_path = canvas_dir / "canvas.yaml"
+    brief_path = canvas_dir / "brief.md"
+    brief_path.write_text(brief, encoding="utf-8")
+
+    try:
+        task_id = _register_task(canvas_path, (doc.get("focus") or "")[:80])
+    except Exception as exc:
+        _j(handler, {"error": "register falhou", "detail": str(exc)[-200:]}, 500)
+        return
+
+    session = _new_session()
+    attachments = [_stage_file(session.session_id, p)
+                  for p in (canvas_path, brief_path)]
+
+    _update_links(task_id, session.session_id)
+    _emit(cid, "canvas_launched", {"task_id": task_id, "session_id": session.session_id})
+
+    _j(handler, {
+        "session_id": session.session_id,
+        "task_id": task_id,
+        "brief": brief,
+        "attachments": attachments,
+    })
+
+
 def handle_canvas_post(handler, path: str, body: dict) -> bool:
     if path == "/api/canvas/patch":
         _handle_patch(handler, body)
+        return True
+    if path == "/api/canvas/launch":
+        _handle_launch(handler, body)
         return True
     if path != "/api/canvas/draft":
         return False
