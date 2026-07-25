@@ -53,6 +53,25 @@ def _emit(canvas_id: str, name: str, payload) -> None:
         job["cond"].notify_all()
 
 
+def _emit_final(canvas_id: str, valid: bool, errors: list[str],
+                name: str, payload) -> None:
+    """Transição atômica pro estado done: status/valid/errors E o append do
+    evento final (mais o notify_all) sob UMA ÚNICA seção crítica de
+    `job["cond"]`. Sem isto, um poll em `/api/canvas/job` podia observar
+    `status="done"` com `n_events` um a menos (o evento `canvas_done` ainda
+    não anexado) — corrigido por review."""
+    with _LOCK:
+        job = CANVAS_JOBS.get(canvas_id)
+    if job is None:
+        return
+    with job["cond"]:
+        job["status"] = "done"
+        job["valid"] = valid
+        job["errors"] = errors
+        job["events"].append((name, payload))
+        job["cond"].notify_all()
+
+
 def _schedule_cleanup(canvas_id: str) -> None:
     def _sweep():
         with _LOCK:
@@ -74,14 +93,8 @@ def _run_enquadrador(canvas_id: str, texto: str) -> None:
             _emit(canvas_id, "canvas_delta", ops)
     except Exception as exc:
         errors = [f"enquadrador quebrou: {exc}"]
-    with _LOCK:
-        job = CANVAS_JOBS.get(canvas_id)
-    if job is not None:
-        with job["cond"]:
-            job["status"] = "done"
-            job["valid"] = not errors
-            job["errors"] = errors
-    _emit(canvas_id, "canvas_done", {"valid": not errors, "errors": errors})
+    _emit_final(canvas_id, not errors, errors,
+                "canvas_done", {"valid": not errors, "errors": errors})
     _schedule_cleanup(canvas_id)
 
 

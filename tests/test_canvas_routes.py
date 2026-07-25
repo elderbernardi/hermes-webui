@@ -114,6 +114,11 @@ def test_registry_limpo_apos_delay_mesmo_sem_stream(acervo, monkeypatch):
 
 
 def test_replay_por_cursor_dois_leitores(acervo, monkeypatch):
+    """A garantia de fato (mata o double-connect): num job JÁ CONCLUÍDO, dois
+    leitores conectando com cursores diferentes recebem, cada um, seu próprio
+    replay completo a partir do cursor pedido — sem consumir nem interferir
+    no outro. Aciona `handle_canvas_get` de verdade (não só inspeciona o dict
+    interno)."""
     monkeypatch.setattr(canvas_tarefas, "enquadrar",
                         lambda t, session=None: ({"focus": "F", "vetor": "execucao",
                                                   "intent_type": "produzir"}, []))
@@ -123,9 +128,30 @@ def test_replay_por_cursor_dois_leitores(acervo, monkeypatch):
     job = canvas_tarefas.CANVAS_JOBS[cid]
     with job["cond"]:
         job["cond"].wait_for(lambda: job["status"] == "done", timeout=5)
-    nomes = [n for n, _ in job["events"]]
-    assert nomes == ["canvas_snapshot", "canvas_delta", "canvas_done"]
-    assert nomes == [n for n, _ in job["events"]]  # segunda leitura idêntica (replay)
+
+    from urllib.parse import urlparse
+
+    # Leitor A: since=1 pula o snapshot (evento 0) mas ainda replaya
+    # delta+done, encerrando sozinho (predicado satisfeito + canvas_done
+    # visto -> break) sem precisar de outro thread/timeout.
+    h1 = FakeHandler()
+    canvas_tarefas.handle_canvas_get(
+        h1, urlparse(f"/api/canvas/stream?canvas_id={cid}&since=1"))
+    body1 = h1.wfile.getvalue().decode()
+    assert "event: canvas_snapshot" not in body1
+    assert "event: canvas_delta" in body1
+    assert "event: canvas_done" in body1
+    assert "id: " in body1
+
+    # Leitor B: reconecta do zero no MESMO job já concluído — replay
+    # independente e completo, incluindo o snapshot que o leitor A pulou.
+    h2 = FakeHandler()
+    canvas_tarefas.handle_canvas_get(
+        h2, urlparse(f"/api/canvas/stream?canvas_id={cid}&since=0"))
+    body2 = h2.wfile.getvalue().decode()
+    assert "event: canvas_snapshot" in body2
+    assert "event: canvas_delta" in body2
+    assert "event: canvas_done" in body2
 
 
 def test_poll_endpoint(acervo, monkeypatch):
@@ -153,3 +179,19 @@ def test_list_para_o_atrio(acervo, monkeypatch):
     canvas_tarefas.handle_canvas_get(h, urlparse("/api/canvas/list"))
     lista = json.loads(h.wfile.getvalue())
     assert any(item["canvas_id"] == cid for item in lista)
+
+
+def test_list_ordenado_mais_recentes_primeiro(acervo):
+    """`/api/canvas/list` ordena por nome de diretório decrescente (o id
+    embute o timestamp) — slugs escolhidos para que a ordem seja garantida
+    por comparação lexicográfica mesmo se os dois drafts caírem no mesmo
+    segundo (sem depender de sleep/timing)."""
+    from api import canvas_store
+    from urllib.parse import urlparse
+    cid1, _ = canvas_store.create_draft("aaa primeiro")
+    cid2, _ = canvas_store.create_draft("zzz segundo")
+    h = FakeHandler()
+    canvas_tarefas.handle_canvas_get(h, urlparse("/api/canvas/list"))
+    lista = json.loads(h.wfile.getvalue())
+    ids = [item["canvas_id"] for item in lista]
+    assert ids.index(cid2) < ids.index(cid1)
