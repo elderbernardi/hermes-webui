@@ -10,15 +10,42 @@ perde tudo" do F0 (single `queue.Queue` = um único consumidor destrutivo).
 from __future__ import annotations
 
 import json
+import re
 import threading
 from urllib.parse import parse_qs
 
-from api import canvas_store
+from api import canvas_brief, canvas_store
 from api.canvas_enquadrador import enquadrar
+from api.canvas_validate import validate_core
 
 CANVAS_JOBS: dict[str, dict] = {}
 _LOCK = threading.Lock()
 _CLEANUP_DELAY = 300.0  # s — coleta jobs muito tempo após done (spike single-user)
+
+# Whitelist de pointers editáveis via /api/canvas/patch (ADR-CT-04 T5).
+# Entradas terminadas em "/*" viram regex de UM segmento (cobre índice
+# numérico e o marcador de append "-" do RFC 6902) — casa contra o padrão
+# do PAI (ex.: "/gaps/*" casa "/gaps/2" e "/gaps/-"), nunca uma lista de
+# paths literais (que não daria conta de arrays).
+_WHITELIST_RAW = (
+    "/focus", "/vetor", "/intent_type", "/shape", "/done_criteria",
+    "/verification", "/microversos/primary", "/microversos/related/*",
+    "/gaps/*", "/scope/*", "/assumptions/*", "/artifacts/expected/*",
+    "/next_moves/*",
+)
+
+
+def _whitelist_regex(raw: str) -> re.Pattern:
+    if raw.endswith("/*"):
+        return re.compile(r"^" + re.escape(raw[:-2]) + r"/[^/]+$")
+    return re.compile(r"^" + re.escape(raw) + r"$")
+
+
+_WHITELIST = tuple(_whitelist_regex(p) for p in _WHITELIST_RAW)
+
+
+def _path_editavel(path: str) -> bool:
+    return any(rx.match(path) for rx in _WHITELIST)
 
 
 def _j(handler, obj, status=200):
@@ -98,7 +125,31 @@ def _run_enquadrador(canvas_id: str, texto: str) -> None:
     _schedule_cleanup(canvas_id)
 
 
+def _handle_patch(handler, body: dict) -> None:
+    cid = body.get("canvas_id") or ""
+    ops = body.get("ops") or []
+    for op in ops:
+        if not _path_editavel(op.get("path", "")):
+            _j(handler, {"error": "path não editável"}, 400)
+            return
+    try:
+        canvas = canvas_store.load_canvas(cid)
+    except Exception:
+        _j(handler, {"error": "canvas desconhecido"}, 404)
+        return
+    canvas = canvas_store.apply_patch(canvas, ops)
+    canvas_store.save_canvas(cid, canvas)
+    core = canvas_store._doc_to_core(canvas)
+    valid, errors = validate_core(core)
+    _emit(cid, "canvas_delta", ops)
+    _emit(cid, "canvas_validity", {"valid": valid, "errors": errors})
+    _j(handler, {"ok": True, "valid": valid, "errors": errors})
+
+
 def handle_canvas_post(handler, path: str, body: dict) -> bool:
+    if path == "/api/canvas/patch":
+        _handle_patch(handler, body)
+        return True
     if path != "/api/canvas/draft":
         return False
     texto = (body.get("text") or "").strip()
@@ -196,6 +247,20 @@ def handle_canvas_get(handler, parsed) -> bool:
         return True
     if parsed.path == "/api/canvas/list":
         _j(handler, _list_canvases())
+        return True
+    if parsed.path == "/api/canvas/brief":
+        cid = (parse_qs(parsed.query).get("canvas_id") or [""])[0]
+        try:
+            doc = canvas_store.load_canvas(cid)
+        except Exception:
+            _j(handler, {"error": "canvas desconhecido"}, 404)
+            return True
+        try:
+            texto = canvas_brief.compile_brief(doc)
+        except ValueError as exc:
+            _j(handler, {"error": str(exc)}, 400)
+            return True
+        _j(handler, {"brief": texto})
         return True
     if parsed.path != "/api/canvas/stream":
         return False

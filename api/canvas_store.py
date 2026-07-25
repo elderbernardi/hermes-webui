@@ -149,3 +149,26 @@ def core_to_patch(core: dict) -> list[dict]:
     for gap in core.get("gaps") or []:
         ops.append({"op": "add", "path": "/gaps/-", "value": gap})
     return ops
+
+
+def _doc_to_core(doc: dict) -> dict:
+    """Inverso de `_CORE_TO_DOC`: re-extrai o núcleo (schema v0.5) a partir
+    do documento (`/microversos/primary` → `microverso_primary`). Usado
+    depois de um patch para revalidar com `canvas_validate.validate_core`.
+    Chaves AUSENTES no doc ficam de fora do núcleo (não viram `None`), pra
+    não disparar "campo desconhecido" ou falha de enum à toa."""
+    core: dict = {}
+    for key, path in _CORE_TO_DOC.items():
+        try:
+            parent, last = _resolve(doc, path)
+        except (KeyError, IndexError, TypeError):
+            continue
+        if isinstance(parent, list):
+            idx = int(last)
+            if 0 <= idx < len(parent):
+                core[key] = parent[idx]
+        elif last in parent:
+            core[key] = parent[last]
+    if doc.get("gaps") is not None:
+        core["gaps"] = list(doc["gaps"])
+    return core

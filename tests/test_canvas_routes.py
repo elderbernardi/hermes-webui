@@ -195,3 +195,26 @@ def test_list_ordenado_mais_recentes_primeiro(acervo):
     lista = json.loads(h.wfile.getvalue())
     ids = [item["canvas_id"] for item in lista]
     assert ids.index(cid2) < ids.index(cid1)
+
+
+def test_patch_valido_persiste_e_emite(acervo):
+    from api import canvas_store
+    cid, _ = canvas_store.create_draft("editar")
+    canvas_tarefas.CANVAS_JOBS[cid] = canvas_tarefas._new_job()
+    h = FakeHandler()
+    assert canvas_tarefas.handle_canvas_post(h, "/api/canvas/patch", {
+        "canvas_id": cid,
+        "ops": [{"op": "replace", "path": "/focus", "value": "Foco editado"},
+                 {"op": "replace", "path": "/vetor", "value": "execucao"},
+                 {"op": "replace", "path": "/intent_type", "value": "produzir"}]})
+    assert json.loads(h.wfile.getvalue())["valid"] is True
+    assert canvas_store.load_canvas(cid)["focus"] == "Foco editado"
+
+
+def test_patch_path_fora_da_whitelist_400(acervo):
+    from api import canvas_store
+    cid, _ = canvas_store.create_draft("editar")
+    h = FakeHandler()
+    canvas_tarefas.handle_canvas_post(h, "/api/canvas/patch", {
+        "canvas_id": cid, "ops": [{"op": "replace", "path": "/canvas_id", "value": "hack"}]})
+    assert h.status == 400
