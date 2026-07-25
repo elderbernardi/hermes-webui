@@ -414,6 +414,9 @@
     } else {
       status("");
     }
+    // MOD-013 (F2): entrega o canvas recém-aberto à ilha do Curador (se carregada).
+    try { window.CanvasCurador && window.CanvasCurador.onCockpitOpen(cid); }
+    catch (_) { /* ilha é opcional; nunca quebra o Cockpit */ }
   }
 
   // ── surface (rule 2): reparent to <body>, dialog semantics ──────────────
@@ -513,5 +516,15 @@
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", _bootstrap);
   else _bootstrap();
 
-  window.CVT = { toggle, iniciar, abrirCockpit, applyPatch, esc };
+  // MOD-013 (F2): superfície mínima e estável para a ilha do Curador
+  // (static/canvas-curador.js). acceptOps roteia os ops pré-computados de um
+  // card pelo MESMO submitOps do editor manual — canvas em memória + re-render
+  // do Cockpit ficam com fonte única. getCanvas/currentCid deixam a ilha ler o
+  // microverso âncora e renderizar suas próprias zonas.
+  window.CVT = {
+    toggle, iniciar, abrirCockpit, applyPatch, esc,
+    acceptOps: submitOps,
+    getCanvas: () => canvas,
+    currentCid: () => state.cid,
+  };
 })();

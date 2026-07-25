@@ -62,3 +62,13 @@
   padding: .7rem; max-height: 260px; overflow: auto; }
 .cvt-btn { padding: .5rem 1rem; border-radius: 8px; border: 1px solid #2a2a45; background: #1c1c2e; color: inherit; cursor: pointer; margin-right: .5rem; }
 .cvt-btn-primary { background: #5b5bd6; border-color: #5b5bd6; color: #fff; }
+
+/* MOD-013 (F2) — ilha do Curador */
+.cvt-curador-zone { margin-top: 12px; }
+.cvt-curador-zone h2 { font-size: 1rem; margin: 0 0 8px; }
+.cvt-curador-zone h3 { font-size: .85rem; margin: 8px 0 4px; opacity: .8; }
+.cvt-sug { border: 1px solid var(--cvt-border, #3334); border-radius: 8px;
+           padding: 8px 10px; margin: 6px 0; }
+.cvt-sug-porque { font-size: .9rem; }
+.cvt-sug-fonte { font-size: .75rem; opacity: .7; margin: 2px 0 6px; word-break: break-all; }
+.cvt-sug-ok, .cvt-sug-no { font-size: .8rem; margin-right: 6px; cursor: pointer; }
