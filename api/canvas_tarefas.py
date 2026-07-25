@@ -45,7 +45,11 @@ _WHITELIST = tuple(_whitelist_regex(p) for p in _WHITELIST_RAW)
 
 
 def _path_editavel(path: str) -> bool:
-    return any(rx.match(path) for rx in _WHITELIST)
+    # fullmatch (não match): com match(), "$" ainda casa antes de um "\n"
+    # final (ex.: pattern "^/focus$" casa "/focus\n"), o que deixaria vazar
+    # um pointer com newline injetado. fullmatch exige consumir a string
+    # inteira e fecha essa brecha.
+    return any(rx.fullmatch(path) for rx in _WHITELIST)
 
 
 def _j(handler, obj, status=200):
@@ -137,9 +141,17 @@ def _handle_patch(handler, body: dict) -> None:
     except Exception:
         _j(handler, {"error": "canvas desconhecido"}, 404)
         return
-    canvas = canvas_store.apply_patch(canvas, ops)
+    # apply_patch/_doc_to_core operam só em memória até aqui — um op que
+    # passa na whitelist mas falha em runtime (remove fora do range, add/
+    # replace sem "value", ...) vira 400 limpo em vez de propagar a
+    # exceção; nada é persistido antes deste ponto.
+    try:
+        canvas = canvas_store.apply_patch(canvas, ops)
+        core = canvas_store._doc_to_core(canvas)
+    except Exception as exc:
+        _j(handler, {"error": f"op inválida: {exc}"}, 400)
+        return
     canvas_store.save_canvas(cid, canvas)
-    core = canvas_store._doc_to_core(canvas)
     valid, errors = validate_core(core)
     _emit(cid, "canvas_delta", ops)
     _emit(cid, "canvas_validity", {"valid": valid, "errors": errors})

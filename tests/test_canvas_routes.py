@@ -218,3 +218,30 @@ def test_patch_path_fora_da_whitelist_400(acervo):
     canvas_tarefas.handle_canvas_post(h, "/api/canvas/patch", {
         "canvas_id": cid, "ops": [{"op": "replace", "path": "/canvas_id", "value": "hack"}]})
     assert h.status == 400
+
+
+def test_patch_op_com_alvo_invalido_em_runtime_400_sem_persistir(acervo):
+    """Path na whitelist mas op inaplicável em runtime (remove fora do range
+    de um `gaps` vazio) não deve propagar exceção nem persistir nada — 400
+    limpo, doc no disco idêntico ao snapshot anterior."""
+    from api import canvas_store
+    cid, _ = canvas_store.create_draft("editar")
+    antes = canvas_store.load_canvas(cid)
+    h = FakeHandler()
+    canvas_tarefas.handle_canvas_post(h, "/api/canvas/patch", {
+        "canvas_id": cid, "ops": [{"op": "remove", "path": "/gaps/5"}]})
+    assert h.status == 400
+    assert canvas_store.load_canvas(cid) == antes
+
+
+def test_patch_path_com_newline_injetado_rejeitado(acervo):
+    """`re.match` deixaria "/focus\\n" passar (o "$" casa antes do "\\n"
+    final); com `fullmatch` isso é rejeitado como path fora da whitelist."""
+    from api import canvas_store
+    cid, _ = canvas_store.create_draft("editar")
+    h = FakeHandler()
+    canvas_tarefas.handle_canvas_post(h, "/api/canvas/patch", {
+        "canvas_id": cid,
+        "ops": [{"op": "replace", "path": "/focus\n", "value": "hack"}]})
+    assert h.status == 400
+    assert json.loads(h.wfile.getvalue())["error"] == "path não editável"
