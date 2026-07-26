@@ -283,6 +283,9 @@ def handle_canvas_post(handler, path: str, body: dict) -> bool:
     if path.startswith("/api/canvas/curador/"):   # MOD-013 (F2): forward ao Curador
         from api.canvas_curador import handle_curador_post
         return handle_curador_post(handler, path, body)
+    if path.startswith("/api/canvas/sala/"):     # MOD-014 (F3): forward à Sala viva
+        from api.canvas_sala import handle_sala_post
+        return handle_sala_post(handler, path, body)
     if path == "/api/canvas/patch":
         _handle_patch(handler, body)
         return True
@@ -371,6 +374,9 @@ def handle_canvas_get(handler, parsed) -> bool:
     if parsed.path.startswith("/api/canvas/curador/"):   # MOD-013 (F2): forward ao Curador
         from api.canvas_curador import handle_curador_get
         return handle_curador_get(handler, parsed)
+    if parsed.path.startswith("/api/canvas/sala/"):   # MOD-014 (F3): forward à Sala viva
+        from api.canvas_sala import handle_sala_get
+        return handle_sala_get(handler, parsed)
     if parsed.path == "/api/canvas/get":
         cid = (parse_qs(parsed.query).get("canvas_id") or [""])[0]
         try:
