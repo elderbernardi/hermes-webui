@@ -48,3 +48,119 @@ def _rebuild_launched() -> None:
         if sid:
             with _LAUNCHED_LOCK:
                 _LAUNCHED[sid] = {"canvas_id": p.parent.name, "task_id": doc.get("task_id")}
+
+
+# ── T6: SALA_ROOMS room + non-closing stream + state projection ─────────────
+import json
+from urllib.parse import parse_qs
+
+SALA_ROOMS: dict[str, dict] = {}
+_ROOMS_LOCK = threading.Lock()
+
+
+def _room(cid: str) -> dict:
+    with _ROOMS_LOCK:
+        room = SALA_ROOMS.get(cid)
+        if room is None:
+            room = {"events": [], "cond": threading.Condition()}
+            SALA_ROOMS[cid] = room
+        return room
+
+
+def _emit(cid: str, name: str, payload) -> None:
+    """Append-only + notify. Cloned from CURADOR_ROOMS: non-closing, cursor-replay."""
+    room = _room(cid)
+    with room["cond"]:
+        room["events"].append((name, payload))
+        room["cond"].notify_all()
+
+
+def _project(room: dict) -> dict:
+    phase = None
+    columns: dict = {}
+    with room["cond"]:
+        events = list(room["events"])
+    for name, payload in events:
+        if name == "sala_phase":
+            phase = payload.get("phase")
+        elif name == "sala_kanban":
+            columns[payload.get("task_id")] = payload.get("column")
+    return {"phase": phase, "columns": columns, "n_events": len(events)}
+
+
+def _j(handler, obj, status=200):
+    data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Content-Length", str(len(data)))
+    handler.end_headers()
+    handler.wfile.write(data)
+
+
+def _stream_events(handler, room: dict, cursor: int) -> None:
+    """SSE re-anexável; NÃO fecha em terminal (a sala serve a sessão inteira)."""
+    handler.send_response(200)
+    handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
+    handler.send_header("Cache-Control", "no-cache")
+    handler.end_headers()
+    try:
+        while True:
+            with room["cond"]:
+                room["cond"].wait_for(lambda: len(room["events"]) > cursor, timeout=30)
+                pending = room["events"][cursor:]
+            if not pending:
+                handler.wfile.write(b": keepalive\n\n")
+                handler.wfile.flush()
+                continue
+            frames = []
+            for name, payload in pending:
+                cursor += 1
+                data = json.dumps(payload, ensure_ascii=False)
+                frames.append(f"id: {cursor}\nevent: {name}\ndata: {data}\n\n")
+            handler.wfile.write("".join(frames).encode("utf-8"))
+            handler.wfile.flush()
+    except (BrokenPipeError, ConnectionResetError):
+        pass
+
+
+def handle_sala_get(handler, parsed) -> bool:
+    if parsed.path == "/api/canvas/sala/stream":
+        qs = parse_qs(parsed.query)
+        cid = (qs.get("canvas_id") or [""])[0]
+        try:
+            cursor = int((qs.get("since") or ["0"])[0])
+        except (TypeError, ValueError):
+            cursor = 0
+        if cursor < 0:
+            cursor = 0
+        # opening the stream starts the observer for the linked session (idempotent).
+        link = _link_for_canvas(cid)
+        if link:
+            start_observer(link)
+        _stream_events(handler, _room(cid), cursor)
+        return True
+    if parsed.path == "/api/canvas/sala/state":
+        cid = (parse_qs(parsed.query).get("canvas_id") or [""])[0]
+        _j(handler, _project(_room(cid)))
+        return True
+    return False
+
+
+def _link_for_canvas(cid: str) -> str | None:
+    """Reverse of resolve(): find the session_id linked to a canvas_id."""
+    with _LAUNCHED_LOCK:
+        for sid, v in _LAUNCHED.items():
+            if v.get("canvas_id") == cid:
+                return sid
+    return None
+
+
+# ── Temporary stubs (T6): replaced by the real implementations in T8. ───────
+# handle_sala_get references start_observer; the forward (T7) references
+# handle_sala_post. Both land for real in T8, which removes these stubs.
+def start_observer(session_id):  # noqa: D401 — temporary stub, real impl in T8
+    pass
+
+
+def handle_sala_post(handler, path, body) -> bool:  # temporary stub, real impl in T8
+    return False
