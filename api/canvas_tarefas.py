@@ -268,6 +268,8 @@ def _handle_launch(handler, body: dict) -> None:
         return
 
     _emit(cid, "canvas_launched", {"task_id": task_id, "session_id": session.session_id})
+    from api import canvas_sala
+    canvas_sala.register_launch(session.session_id, cid, task_id)
 
     _j(handler, {
         "session_id": session.session_id,
