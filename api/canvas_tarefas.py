@@ -34,6 +34,7 @@ _WHITELIST_RAW = (
     "/gaps/*", "/scope/*", "/assumptions/*", "/artifacts/expected/*",
     "/next_moves/*",
     "/personas/suggested/*", "/acervo_aplicado/*",
+    "/authorization/*",
 )
 
 
