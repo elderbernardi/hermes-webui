@@ -33,3 +33,44 @@ def test_trace_frame_intent():
 
 def test_unknown_frame_is_ignored():
     assert _st().ingest({"kind": "wat"}) == []
+
+def test_verify_fail_interrupts_on_third_consecutive():
+    st = _st()
+    assert st.ingest({"kind": "verify", "subject": "test_a", "ok": False}) == []
+    assert st.ingest({"kind": "verify", "subject": "test_a", "ok": False}) == []
+    out = st.ingest({"kind": "verify", "subject": "test_a", "ok": False})
+    assert out[0][0] == "sala_interrupt"
+    p = out[0][1]
+    assert p["klass"] == "verify_fail" and p["ops"] == [{"op": "add", "path": "/gaps/-", "value": p["hypothesis"]}]
+
+def test_verify_success_resets_counter():
+    st = _st()
+    st.ingest({"kind": "verify", "subject": "test_a", "ok": False})
+    st.ingest({"kind": "verify", "subject": "test_a", "ok": True})   # reset
+    st.ingest({"kind": "verify", "subject": "test_a", "ok": False})
+    out = st.ingest({"kind": "verify", "subject": "test_a", "ok": False})
+    assert out == []   # only 2 fails since reset
+
+def test_verify_fail_per_subject_isolated():
+    st = _st()
+    for _ in range(2): st.ingest({"kind": "verify", "subject": "a", "ok": False})
+    assert st.ingest({"kind": "verify", "subject": "b", "ok": False}) == []  # b independent
+
+def test_empty_search_gap_on_second():
+    st = _st()
+    assert st.ingest({"kind": "search", "query_sig": "sig1", "empty": True}) == []
+    out = st.ingest({"kind": "search", "query_sig": "sig2", "empty": True})
+    assert out[0][0] == "sala_gap" and out[0][1]["source"] == "empty_search"
+
+def test_identical_signature_counts_as_empty():
+    st = _st()
+    st.ingest({"kind": "search", "query_sig": "same", "empty": False})   # baseline
+    out = st.ingest({"kind": "search", "query_sig": "same", "empty": False})  # repeat -> empty#1... need 2
+    # first repeat is empty#1 (dup of baseline), second repeat triggers gap
+    out2 = st.ingest({"kind": "search", "query_sig": "same", "empty": False})
+    assert out2[0][0] == "sala_gap"
+
+def test_surprise_emits_finding_with_authority_order():
+    out = _st().ingest({"kind": "surprise", "subject": "prazo", "code": "30d", "check": "45d", "spec": "60d"})
+    assert out[0][0] == "sala_finding"
+    assert out[0][1]["authority"] == ["executivo", "spec", "tests", "codigo"]

@@ -61,3 +61,44 @@ class SalaState:
         if path:
             payload["ops"] = [{"op": "add", "path": path, "value": f.get("title")}]
         return [("sala_trace", payload)]
+
+    # ── D3 bounds (mirror F2 Curador _bump_empty/_sig shape) ───────────────
+    def _on_verify(self, f: dict) -> list[tuple[str, dict]]:
+        subj = f.get("subject") or ""
+        if f.get("ok"):
+            self._verify_fails[subj] = 0            # success resets the streak
+            return []
+        n = self._verify_fails.get(subj, 0) + 1
+        self._verify_fails[subj] = n
+        if n < 3:
+            return []
+        hypothesis = f.get("hypothesis") or (
+            f"'{subj}' falhou {n}x seguidas — provável causa a investigar")
+        return [("sala_interrupt", {
+            "canvas_id": self.cid, "klass": "verify_fail",
+            "clarify_id": f.get("clarify_id"), "session_id": f.get("session_id"),
+            "tried": f.get("tried"), "output": f.get("output"), "hypothesis": hypothesis,
+            "ops": [{"op": "add", "path": "/gaps/-", "value": hypothesis}]})]
+
+    def _on_search(self, f: dict) -> list[tuple[str, dict]]:
+        sig = f.get("query_sig") or ""
+        empty = bool(f.get("empty")) or (sig == self._last_sig) or (not self._has_baseline)
+        self._last_sig = sig
+        self._has_baseline = True
+        if not empty:
+            return []
+        self._empty += 1
+        if self._empty < 2:
+            return []
+        q = f.get("query") or sig or "busca"
+        reason = f"Sala não encontrou informação nova para '{q}' após 2 buscas"
+        return [("sala_gap", {"canvas_id": self.cid, "source": "empty_search",
+                              "question": reason,
+                              "ops": [{"op": "add", "path": "/gaps/-", "value": reason}]})]
+
+    def _on_surprise(self, f: dict) -> list[tuple[str, dict]]:
+        return [("sala_finding", {
+            "canvas_id": self.cid, "subject": f.get("subject"),
+            "code": f.get("code"), "check": f.get("check"), "spec": f.get("spec"),
+            "authority": ["executivo", "spec", "tests", "codigo"],
+            "resolution": f.get("resolution")})]
