@@ -14,6 +14,7 @@ from api import canvas_store
 
 _LAUNCHED: dict[str, dict] = {}          # session_id -> {"canvas_id","task_id"}
 _LAUNCHED_LOCK = threading.Lock()
+_PRIMED = False                          # lazy cold-start rebuild guard (fix-wave #1)
 
 
 def register_launch(session_id: str, canvas_id: str, task_id: str) -> None:
@@ -62,7 +63,7 @@ def _room(cid: str) -> dict:
     with _ROOMS_LOCK:
         room = SALA_ROOMS.get(cid)
         if room is None:
-            room = {"events": [], "cond": threading.Condition()}
+            room = {"events": [], "cond": threading.Condition(), "subs": 0}
             SALA_ROOMS[cid] = room
         return room
 
@@ -103,6 +104,8 @@ def _stream_events(handler, room: dict, cursor: int) -> None:
     handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
     handler.send_header("Cache-Control", "no-cache")
     handler.end_headers()
+    with room["cond"]:
+        room["subs"] = room.get("subs", 0) + 1        # #2: track active viewers
     try:
         while True:
             with room["cond"]:
@@ -121,6 +124,9 @@ def _stream_events(handler, room: dict, cursor: int) -> None:
             handler.wfile.flush()
     except (BrokenPipeError, ConnectionResetError):
         pass
+    finally:
+        with room["cond"]:
+            room["subs"] = max(0, room.get("subs", 0) - 1)
 
 
 def handle_sala_get(handler, parsed) -> bool:
@@ -146,13 +152,35 @@ def handle_sala_get(handler, parsed) -> bool:
     return False
 
 
-def _link_for_canvas(cid: str) -> str | None:
-    """Reverse of resolve(): find the session_id linked to a canvas_id."""
+def _ensure_primed() -> None:
+    """Rebuild _LAUNCHED from the durable launch.yaml sidecars ONCE (lazily),
+    so a server restart mid-session reconnects. register_launch keeps _LAUNCHED
+    current afterwards, so a single rebuild on first use suffices (fix-wave #1 —
+    _rebuild_launched had no runtime caller before)."""
+    global _PRIMED
+    with _LAUNCHED_LOCK:
+        if _PRIMED:
+            return
+        _PRIMED = True
+    _rebuild_launched()          # acquires _LAUNCHED_LOCK itself — call it UNLOCKED
+
+
+def _scan_link(cid: str) -> str | None:
     with _LAUNCHED_LOCK:
         for sid, v in _LAUNCHED.items():
             if v.get("canvas_id") == cid:
                 return sid
     return None
+
+
+def _link_for_canvas(cid: str) -> str | None:
+    """Reverse of resolve(): find the session_id linked to a canvas_id.
+    On a miss, lazily rebuild from the durable sidecars once (restart recovery, #1)."""
+    hit = _scan_link(cid)
+    if hit:
+        return hit
+    _ensure_primed()
+    return _scan_link(cid)
 
 
 # ── T8: observer daemon — conduct.jsonl + HITL queues -> reducer -> emit ─────
@@ -305,18 +333,25 @@ def _run_observer(session_id: str) -> None:
             _OBSERVERS.pop(session_id, None)
         return
     st = SalaState(link["canvas_id"], link["task_id"])
-    _room(link["canvas_id"])
+    room = _room(link["canvas_id"])
     ctx = {"sid": session_id, "clarify_q": clarify.sse_subscribe(session_id),
            "approval_q": route_approvals._approval_sse_subscribe(session_id),
            "conduct_off": 0}
-    _prime(st, ctx)
     interval = float(os.environ.get("SALA_POLL_INTERVAL") or 1.0)
+    idle_stop = int(os.environ.get("SALA_OBS_IDLE_STOP") or 30)   # #2: cycles w/o a viewer -> wind down
+    idle = 0
     try:
+        _prime(st, ctx)              # #6: inside try so finally releases subs on prime failure
         while _OBSERVERS.get(session_id):
             try:
                 _poll_once(st, ctx)
             except Exception:            # erro-calmo: um frame ruim nunca mata a thread
                 logger.exception("sala observer poll failed")
+            # #2: stop path — wind down when no stream is watching the room, so the
+            # thread + the two HITL subscriptions do not leak for the process lifetime.
+            idle = idle + 1 if room.get("subs", 0) <= 0 else 0
+            if idle >= idle_stop:
+                break
             time.sleep(interval)
     finally:
         clarify.sse_unsubscribe(session_id, ctx["clarify_q"])

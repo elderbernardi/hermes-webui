@@ -23,6 +23,7 @@ class SalaState:
         self._empty = 0
         self._last_sig: str | None = None
         self._has_baseline = False
+        self._seen_hitl: set[str] = set()   # fix-wave #5: dedup HITL cards by id
 
     def ingest(self, frame: dict) -> list[tuple[str, dict]]:
         kind = frame.get("kind")
@@ -105,6 +106,11 @@ class SalaState:
 
     # ── D1(ii) clarify -> gap (re-skin an ALREADY-blocked runtime clarify) ──
     def _on_clarify(self, f: dict) -> list[tuple[str, dict]]:
+        ckey = f.get("clarify_id")
+        if ckey:                                  # #5: the HITL SSE re-fires the head; emit once
+            if ckey in self._seen_hitl:
+                return []
+            self._seen_hitl.add(ckey)
         if f.get("bound_interrupt"):
             hyp = f.get("hypothesis") or f.get("question") or "bound atingido"
             return [("sala_interrupt", {
@@ -121,6 +127,11 @@ class SalaState:
 
     # ── D2(i) Draft-First: conduct {"t":"draft"} OR a runtime approval gate ──
     def _on_approval(self, f: dict) -> list[tuple[str, dict]]:
+        akey = f.get("approval_id")
+        if akey:                                  # #5: runtime gate re-fires the head; emit once.
+            if akey in self._seen_hitl:           # conduct-declared drafts (akey=None) stay distinct.
+                return []
+            self._seen_hitl.add(akey)
         return [("sala_draft", {
             "canvas_id": self.cid, "session_id": f.get("session_id"),
             "action": f.get("action"), "draft_text": f.get("draft_text"),

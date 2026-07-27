@@ -110,3 +110,21 @@ def test_conduct_declared_draft_has_no_approval_id():
     out = _st().ingest({"kind": "approval", "approval_id": None, "session_id": "s2",
                         "action": "enviar e-mail", "draft_text": "para o diretor…"})
     assert out[0][0] == "sala_draft" and out[0][1]["approval_id"] is None
+
+
+# ── fix-wave #5: HITL dedup by id (the SSE re-fires the head pending) ─────────
+def test_clarify_deduped_by_id():
+    st = _st()
+    f = {"kind": "clarify", "clarify_id": "cl1", "question": "q?"}
+    assert st.ingest(f)[0][0] == "sala_gap"    # first emits
+    assert st.ingest(f) == []                  # re-fire of the same clarify_id -> no duplicate card
+
+
+def test_approval_deduped_by_id_but_conduct_drafts_distinct():
+    st = _st()
+    a = {"kind": "approval", "approval_id": "ap1", "action": "x", "draft_text": "y"}
+    assert st.ingest(a)[0][0] == "sala_draft"
+    assert st.ingest(a) == []                  # same runtime approval_id -> no dup
+    d = {"kind": "approval", "approval_id": None, "action": "z", "draft_text": "w"}
+    assert st.ingest(d)[0][0] == "sala_draft"  # conduct-declared drafts (id=None) stay distinct
+    assert st.ingest(d)[0][0] == "sala_draft"
