@@ -83,3 +83,16 @@ def test_clarify_frame_emits_gap():
     assert p["source"] == "clarify" and p["clarify_id"] == "cl9" and p["session_id"] == "s9"
     assert p["choices_offered"] == ["30d", "60d"]
     assert p["ops"] == [{"op": "add", "path": "/gaps/-", "value": "qual o prazo desejado?"}]
+
+def test_bound_interrupt_clarify_emits_interrupt_not_gap():
+    out = _st().ingest({"kind": "clarify", "clarify_id": "b1", "session_id": "s1",
+                        "question": "3 tentativas falharam", "bound_interrupt": True,
+                        "hypothesis": "o schema mudou", "tried": "rodei o teste 3x", "output": "AssertionError"})
+    assert out[0][0] == "sala_interrupt"
+    p = out[0][1]
+    assert p["klass"] == "verify_fail" and p["hypothesis"] == "o schema mudou"
+    assert p["clarify_id"] == "b1" and p["ops"] == [{"op": "add", "path": "/gaps/-", "value": "o schema mudou"}]
+
+def test_normal_clarify_still_emits_gap():
+    out = _st().ingest({"kind": "clarify", "clarify_id": "n1", "question": "q?"})
+    assert out[0][0] == "sala_gap"   # unchanged

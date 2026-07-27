@@ -105,6 +105,13 @@ class SalaState:
 
     # ── D1(ii) clarify -> gap (re-skin an ALREADY-blocked runtime clarify) ──
     def _on_clarify(self, f: dict) -> list[tuple[str, dict]]:
+        if f.get("bound_interrupt"):
+            hyp = f.get("hypothesis") or f.get("question") or "bound atingido"
+            return [("sala_interrupt", {
+                "canvas_id": self.cid, "klass": "verify_fail",
+                "clarify_id": f.get("clarify_id"), "session_id": f.get("session_id"),
+                "tried": f.get("tried"), "output": f.get("output"), "hypothesis": hyp,
+                "ops": [{"op": "add", "path": "/gaps/-", "value": hyp}]})]
         q = f.get("question") or ""
         return [("sala_gap", {
             "canvas_id": self.cid, "source": "clarify",
