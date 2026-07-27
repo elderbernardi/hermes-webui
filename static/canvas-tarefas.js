@@ -417,6 +417,8 @@
     // MOD-013 (F2): entrega o canvas recém-aberto à ilha do Curador (se carregada).
     try { window.CanvasCurador && window.CanvasCurador.onCockpitOpen(cid); }
     catch (_) { /* ilha é opcional; nunca quebra o Cockpit */ }
+    // MOD-014 (F3): idem para a ilha da Sala viva (se carregada; nunca quebra).
+    try { if (window.CanvasSala) window.CanvasSala.onCockpitOpen(cid); } catch (_) {}
   }
 
   // ── surface (rule 2): reparent to <body>, dialog semantics ──────────────

@@ -72,3 +72,18 @@
 .cvt-sug-porque { font-size: .9rem; }
 .cvt-sug-fonte { font-size: .75rem; opacity: .7; margin: 2px 0 6px; word-break: break-all; }
 .cvt-sug-ok, .cvt-sug-no { font-size: .8rem; margin-right: 6px; cursor: pointer; }
+
+/* MOD-014 (F3) — Sala viva. M4: reuse the real palette tokens (navy panels
+   #1a1a2b, borders #2a2a45 / var(--cvt-border,#3334)) — NOT invented teals.
+   The implementer confirms the exact tokens against .cvt-sug/.cvt-zona first. */
+.cvt-sala-zone { margin-top: .75rem; }
+.cvt-sala-chip { font-size: .7rem; padding: .1rem .4rem; border-radius: .5rem;
+  background: #2a2a45; color: #cdd; margin-left: .5rem; vertical-align: middle; }
+.cvt-sala-card { border: 1px solid var(--cvt-border, #2a2a45); border-radius: .4rem;
+  padding: .5rem .6rem; margin: .35rem 0; background: #1a1a2b; }
+.cvt-sala-interrupt, .cvt-sala-draft { border-color: #7a4a2a; }
+.cvt-sala-title { font-weight: 600; }
+.cvt-sala-sub { font-size: .78rem; color: #8a97a5; word-break: break-word; }
+.cvt-sala-resp, .cvt-sala-auth { width: 100%; margin: .3rem 0; }
+.cvt-sala-drafttext { width: 100%; min-height: 3rem; }
+.cvt-sala-card button { margin-right: .4rem; }
