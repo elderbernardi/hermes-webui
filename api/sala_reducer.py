@@ -102,3 +102,12 @@ class SalaState:
             "code": f.get("code"), "check": f.get("check"), "spec": f.get("spec"),
             "authority": ["executivo", "spec", "tests", "codigo"],
             "resolution": f.get("resolution")})]
+
+    # ── D1(ii) clarify -> gap (re-skin an ALREADY-blocked runtime clarify) ──
+    def _on_clarify(self, f: dict) -> list[tuple[str, dict]]:
+        q = f.get("question") or ""
+        return [("sala_gap", {
+            "canvas_id": self.cid, "source": "clarify",
+            "clarify_id": f.get("clarify_id"), "session_id": f.get("session_id"),
+            "question": q, "choices_offered": f.get("choices_offered") or [],
+            "ops": [{"op": "add", "path": "/gaps/-", "value": q}]})]

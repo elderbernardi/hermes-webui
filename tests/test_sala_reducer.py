@@ -74,3 +74,12 @@ def test_surprise_emits_finding_with_authority_order():
     out = _st().ingest({"kind": "surprise", "subject": "prazo", "code": "30d", "check": "45d", "spec": "60d"})
     assert out[0][0] == "sala_finding"
     assert out[0][1]["authority"] == ["executivo", "spec", "tests", "codigo"]
+
+def test_clarify_frame_emits_gap():
+    out = _st().ingest({"kind": "clarify", "clarify_id": "cl9", "session_id": "s9",
+                        "question": "qual o prazo desejado?", "choices_offered": ["30d", "60d"]})
+    assert out[0][0] == "sala_gap"
+    p = out[0][1]
+    assert p["source"] == "clarify" and p["clarify_id"] == "cl9" and p["session_id"] == "s9"
+    assert p["choices_offered"] == ["30d", "60d"]
+    assert p["ops"] == [{"op": "add", "path": "/gaps/-", "value": "qual o prazo desejado?"}]
