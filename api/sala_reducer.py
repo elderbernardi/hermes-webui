@@ -118,3 +118,10 @@ class SalaState:
             "clarify_id": f.get("clarify_id"), "session_id": f.get("session_id"),
             "question": q, "choices_offered": f.get("choices_offered") or [],
             "ops": [{"op": "add", "path": "/gaps/-", "value": q}]})]
+
+    # ── D2(i) Draft-First: conduct {"t":"draft"} OR a runtime approval gate ──
+    def _on_approval(self, f: dict) -> list[tuple[str, dict]]:
+        return [("sala_draft", {
+            "canvas_id": self.cid, "session_id": f.get("session_id"),
+            "action": f.get("action"), "draft_text": f.get("draft_text"),
+            "approval_id": f.get("approval_id"), "requires_auth": True})]

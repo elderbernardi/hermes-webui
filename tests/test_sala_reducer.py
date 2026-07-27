@@ -96,3 +96,17 @@ def test_bound_interrupt_clarify_emits_interrupt_not_gap():
 def test_normal_clarify_still_emits_gap():
     out = _st().ingest({"kind": "clarify", "clarify_id": "n1", "question": "q?"})
     assert out[0][0] == "sala_gap"   # unchanged
+
+def test_approval_frame_emits_draft():
+    out = _st().ingest({"kind": "approval", "approval_id": "ap1", "session_id": "s1",
+                        "action": "git push", "draft_text": "push da branch collab/x"})
+    assert out[0][0] == "sala_draft"
+    p = out[0][1]
+    assert p["approval_id"] == "ap1" and p["action"] == "git push" and p["session_id"] == "s1"
+    assert p["draft_text"] == "push da branch collab/x" and p["requires_auth"] is True
+
+def test_conduct_declared_draft_has_no_approval_id():
+    # the agent's own EX-08 declaration (via conduct {"t":"draft"}) carries no runtime approval_id
+    out = _st().ingest({"kind": "approval", "approval_id": None, "session_id": "s2",
+                        "action": "enviar e-mail", "draft_text": "para o diretor…"})
+    assert out[0][0] == "sala_draft" and out[0][1]["approval_id"] is None
