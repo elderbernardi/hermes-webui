@@ -44,3 +44,70 @@ def test_forward_unknown_sala_path_falls_through():
     h = _StateHandler()
     handled = ct.handle_canvas_get(h, urlparse("/api/canvas/sala/bogus"))
     assert handled is False   # handle_sala_get returns False -> caller returns False
+
+
+# ── T8: observer daemon ──────────────────────────────────────────────────────
+import queue as _queue
+
+
+def _ctx(sid, cq, aq):
+    return {"sid": sid, "clarify_q": cq, "approval_q": aq, "conduct_off": 0}
+
+
+def test_poll_once_translates_conduct_frames(monkeypatch):
+    canvas_sala.SALA_ROOMS.clear()
+    from api.sala_reducer import SalaState
+    st = SalaState("cidP", "taskP")
+    conduct = [{"t": "phase", "phase": "act", "seq": 1},
+               {"t": "artifact", "title": "Ofício", "atype": "markdown", "path": "/o.md", "tool": "write_file"}]
+    canvas_sala._INJECTED["conduct"] = lambda task_id, off: (conduct[off:], len(conduct))
+    ctx = _ctx("sidP", _queue.Queue(), _queue.Queue())
+    n = canvas_sala._poll_once(st, ctx)
+    names = [nm for nm, _ in canvas_sala._room("cidP")["events"]]
+    assert names == ["sala_phase", "sala_kanban", "sala_artifact"] and n == 3
+    canvas_sala._INJECTED.clear()
+
+
+def test_poll_once_drains_clarify_queue(monkeypatch):
+    canvas_sala.SALA_ROOMS.clear()
+    from api.sala_reducer import SalaState
+    st = SalaState("cidC", "taskC")
+    canvas_sala._INJECTED["conduct"] = lambda t, o: ([], o)
+    cq = _queue.Queue()
+    cq.put({"pending": {"clarify_id": "cl1", "question": "qual prazo?", "choices_offered": ["30d", "60d"]}, "pending_count": 1})
+    canvas_sala._poll_once(st, _ctx("sidC", cq, _queue.Queue()))
+    # _on_clarify lands in T9; here just assert the frame reached the reducer without error
+    canvas_sala._INJECTED.clear()
+
+
+def test_conduct_off_advances_no_reprocess(monkeypatch):
+    canvas_sala.SALA_ROOMS.clear()
+    from api.sala_reducer import SalaState
+    st = SalaState("cidO", "taskO")
+    lines = [{"t": "next_move", "text": "a"}]
+    canvas_sala._INJECTED["conduct"] = lambda t, off: (lines[off:], len(lines))
+    ctx = _ctx("sidO", _queue.Queue(), _queue.Queue())
+    assert canvas_sala._poll_once(st, ctx) == 1
+    assert canvas_sala._poll_once(st, ctx) == 0   # offset advanced -> no reprocessing
+    canvas_sala._INJECTED.clear()
+
+
+def test_start_observer_noop_without_flag(monkeypatch):
+    monkeypatch.delenv("SALA_ENABLE", raising=False)
+    canvas_sala._OBSERVERS.clear()
+    canvas_sala.start_observer("sidZ")
+    assert "sidZ" not in canvas_sala._OBSERVERS
+
+
+def test_observer_never_mints_a_blocking_primitive(monkeypatch):
+    calls = []
+    from api import clarify as _cl
+    monkeypatch.setattr(_cl, "register_gateway_notify", lambda *a, **k: calls.append("notify"))
+    monkeypatch.setattr(_cl, "submit_pending", lambda *a, **k: calls.append("submit"))
+    from api.sala_reducer import SalaState
+    canvas_sala._INJECTED["conduct"] = lambda t, o: ([], o)
+    import queue as q
+    canvas_sala._poll_once(SalaState("c", "t"), {"sid": "s", "clarify_q": q.Queue(),
+                            "approval_q": q.Queue(), "conduct_off": 0})
+    assert calls == []   # F3 mints nothing
+    canvas_sala._INJECTED.clear()

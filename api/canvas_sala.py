@@ -155,12 +155,182 @@ def _link_for_canvas(cid: str) -> str | None:
     return None
 
 
-# ── Temporary stubs (T6): replaced by the real implementations in T8. ───────
-# handle_sala_get references start_observer; the forward (T7) references
-# handle_sala_post. Both land for real in T8, which removes these stubs.
-def start_observer(session_id):  # noqa: D401 — temporary stub, real impl in T8
-    pass
+# ── T8: observer daemon — conduct.jsonl + HITL queues -> reducer -> emit ─────
+import logging
+import os
+import queue
+
+from api import clarify, route_approvals
+from api.sala_reducer import SalaState
+
+logger = logging.getLogger("canvas_sala")
+
+_OBSERVERS: dict[str, bool] = {}
+_OBS_LOCK = threading.Lock()
+_INJECTED: dict[str, object] = {}   # test seam: {"conduct": callable}
 
 
-def handle_sala_post(handler, path, body) -> bool:  # temporary stub, real impl in T8
-    return False
+def _enabled() -> bool:
+    return os.environ.get("SALA_ENABLE") == "1"
+
+
+def _read_conduct_lines(task_id: str, offset: int) -> tuple[list[dict], int]:
+    p = canvas_store.tasks_dir() / task_id / "conduct.jsonl"
+    if not p.is_file():
+        return [], offset
+    lines = p.read_text(encoding="utf-8").splitlines()
+    out = []
+    for ln in lines[offset:]:
+        try:
+            out.append(json.loads(ln))
+        except ValueError:
+            pass
+    return out, len(lines)
+
+
+def _frame_from_conduct(obj: dict) -> dict | None:
+    t = obj.get("t")
+    if t == "phase":
+        return {"kind": "phase", "phase": obj.get("phase"), "seq": obj.get("seq")}
+    if t == "trace":
+        return {"kind": "trace", "trace_kind": obj.get("kind"),
+                "title": obj.get("title"), "evidence": obj.get("evidence") or {}}
+    if t == "artifact":
+        return {"kind": "artifact", "title": obj.get("title"), "atype": obj.get("atype"),
+                "path": obj.get("path"), "tool": obj.get("tool")}
+    if t == "verify":
+        return {"kind": "verify", "subject": obj.get("subject"), "ok": obj.get("ok"),
+                "hypothesis": obj.get("hypothesis"), "tried": obj.get("tried"),
+                "output": obj.get("output")}
+    if t == "search":
+        return {"kind": "search", "query_sig": obj.get("query_sig"),
+                "empty": obj.get("empty"), "query": obj.get("query")}
+    if t == "surprise":
+        return {"kind": "surprise", "subject": obj.get("subject"), "code": obj.get("code"),
+                "check": obj.get("check"), "spec": obj.get("spec"), "resolution": obj.get("resolution")}
+    if t == "next_move":
+        return {"kind": "next_move", "text": obj.get("text")}
+    if t == "draft":     # the agent's own EX-08 Draft-First declaration -> sala_draft
+        return {"kind": "approval", "session_id": None, "approval_id": None,
+                "action": obj.get("action"), "draft_text": obj.get("draft_text") or ""}
+    return None
+
+
+def _frame_from_clarify(sid: str, payload: dict) -> dict | None:
+    pend = payload.get("pending")
+    if not pend:
+        return None
+    return {"kind": "clarify", "clarify_id": pend.get("clarify_id"), "session_id": sid,
+            "question": pend.get("question"), "choices_offered": pend.get("choices_offered") or [],
+            "bound_interrupt": pend.get("kind") == "bound_interrupt",
+            "hypothesis": pend.get("hypothesis"), "tried": pend.get("tried"), "output": pend.get("output")}
+
+
+def _frame_from_approval(sid: str, payload: dict) -> dict | None:
+    pend = payload.get("pending")
+    if not pend:
+        return None
+    # I1: real approval pending keys = command/pattern_key/description/approval_id
+    return {"kind": "approval", "session_id": sid,
+            "approval_id": pend.get("approval_id"),
+            "action": pend.get("command"),
+            "draft_text": pend.get("description") or pend.get("command") or ""}
+
+
+def _drain(q: queue.Queue) -> list:
+    out = []
+    try:
+        while True:
+            out.append(q.get_nowait())
+    except queue.Empty:
+        pass
+    return out
+
+
+def _emit_frame(st: SalaState, frame) -> int:
+    if not frame:
+        return 0
+    # conduct-declared drafts have no session on the frame; the island needs it.
+    if frame.get("kind") == "approval" and not frame.get("session_id"):
+        frame["session_id"] = getattr(st, "_sid", None)
+    n = 0
+    for name, payload in st.ingest(frame):
+        _emit(st.cid, name, payload)
+        n += 1
+    return n
+
+
+def _poll_once(st: SalaState, ctx: dict) -> int:
+    st._sid = ctx["sid"]                       # carry the session for draft frames
+    emitted = 0
+    for payload in _drain(ctx["clarify_q"]):
+        emitted += _emit_frame(st, _frame_from_clarify(ctx["sid"], payload))
+    for payload in _drain(ctx["approval_q"]):
+        emitted += _emit_frame(st, _frame_from_approval(ctx["sid"], payload))
+    conduct_reader = _INJECTED.get("conduct") or _read_conduct_lines
+    lines, ctx["conduct_off"] = conduct_reader(st.task_id, ctx["conduct_off"])
+    for obj in lines:
+        emitted += _emit_frame(st, _frame_from_conduct(obj))
+    return emitted
+
+
+def _prime(st: SalaState, ctx: dict) -> None:
+    """M2: sse_subscribe only registers a queue; the routes handler compensates
+    with an initial snapshot the observer lacks. Prime once from the current
+    clarify pending head so an in-flight clarify at observer start is not missed.
+    (M-B2: route_approvals exposes NO get_pending — the approval initial-snapshot
+    lives inline in routes.py:19080; the observer starts at launch, BEFORE any
+    approval, so approval-priming is intentionally omitted here. Mid-session
+    /observe after an already-pending approval is a known v1 gap -> F5.)"""
+    st._sid = ctx["sid"]
+    head = clarify.get_pending(ctx["sid"])
+    if head:
+        _emit_frame(st, _frame_from_clarify(ctx["sid"], {"pending": head}))
+
+
+def start_observer(session_id: str) -> None:
+    if not _enabled():
+        return
+    with _OBS_LOCK:
+        if _OBSERVERS.get(session_id):
+            return
+        _OBSERVERS[session_id] = True
+    threading.Thread(target=_run_observer, args=(session_id,), daemon=True).start()
+
+
+def _run_observer(session_id: str) -> None:
+    link = resolve(session_id)
+    if not link:
+        with _OBS_LOCK:
+            _OBSERVERS.pop(session_id, None)
+        return
+    st = SalaState(link["canvas_id"], link["task_id"])
+    _room(link["canvas_id"])
+    ctx = {"sid": session_id, "clarify_q": clarify.sse_subscribe(session_id),
+           "approval_q": route_approvals._approval_sse_subscribe(session_id),
+           "conduct_off": 0}
+    _prime(st, ctx)
+    interval = float(os.environ.get("SALA_POLL_INTERVAL") or 1.0)
+    try:
+        while _OBSERVERS.get(session_id):
+            try:
+                _poll_once(st, ctx)
+            except Exception:            # erro-calmo: um frame ruim nunca mata a thread
+                logger.exception("sala observer poll failed")
+            time.sleep(interval)
+    finally:
+        clarify.sse_unsubscribe(session_id, ctx["clarify_q"])
+        route_approvals._approval_sse_unsubscribe(session_id, ctx["approval_q"])
+        with _OBS_LOCK:
+            _OBSERVERS.pop(session_id, None)
+
+
+def handle_sala_post(handler, path: str, body: dict) -> bool:
+    if path != "/api/canvas/sala/observe":
+        return False
+    cid = body.get("canvas_id") or ""
+    sid = _link_for_canvas(cid)
+    if sid:
+        start_observer(sid)
+    _j(handler, {"ok": True})
+    return True
