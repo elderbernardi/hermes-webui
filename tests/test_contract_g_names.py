@@ -11,8 +11,11 @@ def _contract_path():
     return p
 
 
+# The 9 SSE events on the SALA_ROOMS log. sala_auth is NOT here: it is the client-side
+# authorization interaction (island -> POST /api/canvas/patch -> /authorization/-), not an
+# SSE event, so it must NOT be lint-counted as one (fix-wave #3 — was falsely counted).
 SALA_EVENTS = ["sala_phase", "sala_artifact", "sala_gap", "sala_kanban", "sala_next_move",
-               "sala_trace", "sala_draft", "sala_auth", "sala_interrupt", "sala_finding"]
+               "sala_trace", "sala_draft", "sala_interrupt", "sala_finding"]
 
 
 def test_contract_declares_every_sala_event():
@@ -23,3 +26,5 @@ def test_contract_declares_every_sala_event():
     # M8 / C-D: assert distinctive reconciliation markers written by THIS branch,
     # not substrings ('AG-UI', 'não') that already exist in the pre-(g) contract.
     assert "E9" in text and "AGUI_GATEWAY" in text, "contract §(g) must reconcile 'E9' vs the AGUI_GATEWAY surface"
+    # fix-wave #3: sala_auth must be documented as the client-side /authorization/- interaction.
+    assert "sala_auth" in text and "/authorization" in text, "contract §(g) must document sala_auth as client-side authorization"
