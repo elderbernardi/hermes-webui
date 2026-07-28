@@ -253,6 +253,9 @@ def _handle_launch(handler, body: dict) -> None:
         _j(handler, {"error": "register falhou", "detail": str(exc)[-200:]}, 500)
         return
 
+    brief = canvas_brief.with_task_id(brief, task_id)
+    brief_path.write_text(brief, encoding="utf-8")   # marker reaches the staged brief.md too
+
     # A partir daqui `_tasks/<task_id>/` já existe (o register criou). Se
     # qualquer passo seguinte falhar, a task fica órfã mas RECONCILIÁVEL —
     # por isso o 500 carrega o task_id de volta, em vez de vazar uma

@@ -45,3 +45,13 @@ def test_brief_renderiza_personas_e_acervo_aceitos():
     assert "- negociador" in b
     assert "Acervo aplicado:" in b
     assert "micro/comercial/templates/oficio.md (template) — modelo pronto" in b
+
+
+def test_with_task_id_appends_marker_and_preserves_brief():
+    from api.canvas_brief import with_task_id
+    out = with_task_id("Brief: renegociar\n\nPostura: execução\n", "task_20260728_ab12cd")
+    assert out.startswith("Brief: renegociar")            # original preserved
+    assert "Task ID (para o conduct.jsonl): task_20260728_ab12cd" in out
+    assert out.endswith("\n")                              # trailing newline kept
+    # idempotent shape: exactly one marker line
+    assert out.count("Task ID (para o conduct.jsonl):") == 1
