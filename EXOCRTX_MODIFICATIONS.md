@@ -145,6 +145,14 @@ As cinco modificações abaixo introduzem a skin `excrtx` e o rebranding Hermes 
 - **Conflito provável:** `api/routes.py` — nulo (0 linhas). `api/canvas_tarefas.py`/`static/canvas-tarefas.js`/`canvas-dev.html`/`canvas-tarefas.css` — baixo (edições aditivas pequenas, mesmo padrão MOD-011/012/013). Demais arquivos do MOD-014 — nulo (novos).
 - **Registro:** `exocortex.saas/docs/plans/2026-07-23_canvas-tarefas/F3-PLANO.md` (charter F3, ADR-CT-04/05/06 consumidos, ADR-CT-07 produzido). Contrato: `projetob/.harness/contracts/exocortex-hermes-webui.md` §(g). Change record COLLAB: `.harness/changes/2026-07-25_COLLAB_canvas-f3-sala-viva.md`. Skills: `exocortex.saas/skills/excrtx-conduct-{loop,bounds}/SKILL.md`. Testes: `tests/test_{contract_g_names,sala_reducer,canvas_sala,sala_launch_link,sala_whitelist,sala_island}.py`.
 
+### MOD-015: C0 — inject launched `task_id` into the launch brief
+
+- **Resumo:** C0 — inject launched `task_id` into the compile_brief output (`api/canvas_brief.py with_task_id`, one call in `_handle_launch`) so the conducting agent targets `_tasks/<id>/conduct.jsonl` without fragile `$HERMES_SESSION_ID` derivation. Additive; hot zone + island untouched.
+- **Tipo:** backend (função pura nova + 2 linhas em `_handle_launch`) + teste. **Calibração** do épico Canvas de Tarefas (fecha o gate que destrava as skills `excrtx-conduct-*` do F3/MOD-014).
+- **Detalhe:** `with_task_id(brief, task_id)` anexa a linha-marcador literal `Task ID (para o conduct.jsonl): <task_id>` ao final do brief compilado (preserva o texto original, mantém newline final). Chamada em `_handle_launch` logo após `task_id = _register_task(...)` ter sucesso e **antes** do staging de sessão/anexos — reescreve tanto a `brief` local (retornada em `"brief": brief` na resposta HTTP, vira a primeira mensagem do agente) quanto persiste `brief_path` em disco (`brief_path.write_text(brief, ...)`) para que o anexo `brief.md` estagiado carregue o mesmo marcador. As skills de condução (Task 2, repo exocortex) leem esta linha para resolver `task_id` sem depender de `$HERMES_SESSION_ID`.
+- **Rebase-safety:** `api/canvas_brief.py` ganha 1 função nova (append-only); `api/canvas_tarefas.py` ganha 2 linhas em `_handle_launch` (sem tocar `routes.py`, hot zone ou a ilha `static/canvas-*.js`). Conteúdo do brief não é superfície de contrato (aditivo).
+- **Registro:** `exocortex.saas/docs/superpowers/specs/2026-07-28-c0-t16-conduct-calibration-design.md`. Testes: `tests/test_canvas_brief.py::test_with_task_id_appends_marker_and_preserves_brief`.
+
 ---
 
 ## Workflow de atualização (rebase)

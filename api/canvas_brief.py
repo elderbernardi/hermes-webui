@@ -84,3 +84,11 @@ def compile_brief(doc: dict) -> str:
     linhas.extend(_bloco_lista("Próximos passos", doc.get("next_moves") or []))
 
     return "\n".join(linhas).rstrip("\n") + "\n"
+
+
+def with_task_id(brief: str, task_id: str) -> str:
+    """EXCRTX MOD-015 (C0) — append the launched task_id so the conducting
+    agent targets $ACERVO/_tasks/<id>/conduct.jsonl without deriving it from
+    $HERMES_SESSION_ID (fragile). The conduct skills read this exact marker.
+    """
+    return brief.rstrip("\n") + f"\n\nTask ID (para o conduct.jsonl): {task_id}\n"
