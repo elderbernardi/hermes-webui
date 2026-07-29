@@ -235,6 +235,16 @@
       (open ? "▾" : "▸") + " Detalhes do método</button>" + body + "</div>";
   }
 
+  function curadorZonesHtml() {
+    // containers de 1ª classe reservados; canvas-curador.js os preenche via
+    // getElementById (fill). São filhos de #cvt-cockpit → herdam switchView.
+    return '<div class="cvt-cur-row">' +
+      '<div class="cvt-zona cvt-cur-subzone" id="cvt-cur-acervo"></div>' +
+      '<div class="cvt-zona cvt-cur-subzone" id="cvt-cur-personas"></div>' +
+      '<div class="cvt-zona cvt-cur-subzone" id="cvt-cur-skills"></div>' +
+      '</div><div class="cvt-zona cvt-cur-pending" id="cvt-cur-sug"></div>';
+  }
+
   function cockpitHeaderHtml() {
     let badge = "";
     if (state.valid === true) badge = '<span class="cvt-badge cvt-badge-ok">✓ válido</span>';
@@ -261,12 +271,18 @@
     html += headlineHtml();
     if (canvas.vetor === "ambiguo") html += ambiguousNudgeHtml();
     html += chipRowHtml();
+    html += curadorZonesHtml();
     html += '<div class="cvt-canvas">' +
       listZoneHtml(LIST_BY_PATH["/gaps"]) +
       listZoneHtml(LIST_BY_PATH["/artifacts/expected"]) + "</div>";
     html += methodCollapseHtml();
     html += briefSectionHtml() + launchSectionHtml();
     el.innerHTML = html;
+    // tail-call best-effort: a ilha preenche as zonas reservadas. fill() faz
+    // no-op se o Curador ainda não está apontado p/ este cockpit (fix-3).
+    if (window.CanvasCurador && window.CanvasCurador.fill) {
+      try { window.CanvasCurador.fill(); } catch (_) {}
+    }
   }
 
   function cardHtml(c) {

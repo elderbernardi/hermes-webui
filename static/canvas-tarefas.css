@@ -103,3 +103,12 @@
 .cvt-collapse { margin: 1rem 0; }
 .cvt-collapse-toggle { font-size: .85rem; }
 .cvt-collapse-body { margin-top: .6rem; }
+
+/* MOD-016 (C1) — zonas do Curador de 1ª classe (a .cvt-curador-zone acima fica
+   inerte/deprecada: a classe não é mais emitida) */
+.cvt-cur-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: .8rem; margin-bottom: 1rem; }
+.cvt-cur-subzone h2 { margin: 0 0 .4rem; font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: #9a9ab0; }
+.cvt-cur-list { list-style: none; margin: 0; padding: 0; font-size: .85rem; }
+.cvt-cur-list li { padding: .15rem 0; word-break: break-word; }
+.cvt-cur-skill { color: #7ad0ff; }
+.cvt-cur-pending { margin-bottom: 1rem; }

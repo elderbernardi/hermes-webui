@@ -64,3 +64,23 @@ def test_detalhes_metodo_colapsado_via_state():
     # fluxo principal = só lacunas + artefatos
     assert 'LIST_BY_PATH["/gaps"]' in js
     assert 'LIST_BY_PATH["/artifacts/expected"]' in js
+
+
+def test_zonas_curador_reservadas_e_fill_no_tail():
+    js = _js()
+    for zid in ('id="cvt-cur-acervo"', 'id="cvt-cur-personas"',
+                'id="cvt-cur-skills"', 'id="cvt-cur-sug"'):
+        assert zid in js
+    assert "curadorZonesHtml" in js
+    assert "window.CanvasCurador.fill" in js
+
+
+def test_invariantes_cvt_e_sala_e_hot_zone():
+    js = _js()
+    for k in ("acceptOps: submitOps", "getCanvas:", "currentCid:"):
+        assert k in js                       # window.CVT surface intacta
+    assert "window.CanvasSala" in js         # hook da Sala (MOD-014) preservado
+    code = _strip_comments(js)               # fix-1: ignora comentários de cabeçalho
+    for hot in ("ui.js", "messages.js", "sessions.js", "panels.js", "boot.js",
+                "style.css", "index.html"):
+        assert hot not in code
