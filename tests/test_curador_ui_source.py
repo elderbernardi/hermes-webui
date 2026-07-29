@@ -14,16 +14,23 @@ def test_canvas_tarefas_expoe_surface_do_curador():
     assert "window.CanvasCurador" in src and "onCockpitOpen" in src
 
 
-def test_ilha_curador_tem_superficie_minima():
-    src = _static("canvas-curador.js")
+def test_ilha_curador_e_helper_sem_hack_de_zona_irma():
+    src = _static("canvas-curador.js")   # _static() já prepende static/ (nome NU)
     assert "/api/canvas/curador/stream" in src
     assert "/api/canvas/curador/delegar" in src
     assert "EventSource" in src
     assert "window.CVT.acceptOps" in src
-    assert "cvt-curador-zone" in src             # container próprio, sobrevive a renderCockpit
-    assert "Pedir sugestões" in src              # gatilho manual canônico (PT-BR)
-    assert "MutationObserver" in src             # esconde a zona fora do Cockpit
     assert "window.CanvasCurador" in src
+    # C1: virou helper — sem zona-irmã, sem observer, sem o rótulo antigo
+    assert "cvt-curador-zone" not in src
+    assert "MutationObserver" not in src
+    assert "Pedir sugestões" not in src
+    # preenche containers reservados + expõe fill + botão "Atualizar"
+    assert "getElementById" in src
+    assert "fill" in src
+    assert 'id="cvt-cur-pedir"' in src and "Atualizar" in src
+    # Skills = nature SINGULAR
+    assert '=== "skill"' in src
 
 
 def test_canvas_dev_html_carrega_a_ilha():

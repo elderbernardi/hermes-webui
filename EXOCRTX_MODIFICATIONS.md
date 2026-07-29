@@ -153,6 +153,12 @@ As cinco modificações abaixo introduzem a skin `excrtx` e o rebranding Hermes 
 - **Rebase-safety:** `api/canvas_brief.py` ganha 1 função nova (append-only); `api/canvas_tarefas.py` ganha 2 linhas em `_handle_launch` (sem tocar `routes.py`, hot zone ou a ilha `static/canvas-*.js`). Conteúdo do brief não é superfície de contrato (aditivo).
 - **Registro:** `exocortex.saas/docs/superpowers/specs/2026-07-28-c0-t16-conduct-calibration-design.md`. Testes: `tests/test_canvas_brief.py::test_with_task_id_appends_marker_and_preserves_brief`.
 
+### MOD-016: C1 — Cockpit declutter + zonas do Curador de 1ª classe
+
+**Arquivos:** `static/canvas-tarefas.js`, `static/canvas-tarefas.css`, `static/canvas-curador.js`, `api/canvas_tarefas.py` (+`GET /api/canvas/microversos`), `tests/test_canvas_microversos.py`, `tests/test_canvas_ui_c1_source.py`, `tests/test_curador_ui_source.py`.
+
+Des-burocratiza o Cockpit: a frase vira headline; `vetor`/`intent_type`/`shape` viram chips; microverso vira dropdown dos microversos reais (novo endpoint aditivo `GET /api/canvas/microversos`, read-only, lê `$ACERVO/micro` com o mesmo filtro do Curador); método colapsado. Termina o E3: Acervo Aplicado/Personas/Skills sugeridas viram zonas de 1ª classe DENTRO do `renderCockpit`, alimentadas pelo Curador — a ilha `canvas-curador.js` (MOD-013) é **absorvida** como helper `fill()` (mata `#cvt-curador-zone`+`MutationObserver`). **0 linhas em `routes.py`, 0 deps, 0 build.** Zona quente e `window.CVT`/`canvas-sala.js` (MOD-014) intactos. Contrato: superfície aditiva §(h) (umbrella). Skill-usage de domínio = só citação no brief (carregar-na-sessão = C3/F5).
+
 ---
 
 ## Workflow de atualização (rebase)

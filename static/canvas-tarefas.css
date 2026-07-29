@@ -87,3 +87,29 @@
 .cvt-sala-resp, .cvt-sala-auth { width: 100%; margin: .3rem 0; }
 .cvt-sala-drafttext { width: 100%; min-height: 3rem; }
 .cvt-sala-card button { margin-right: .4rem; }
+
+/* MOD-016 (C1) — Cockpit declutter: headline + chips + microverso dropdown */
+.cvt-headline { font-size: 1.15rem; font-weight: 600; margin: .2rem 0 .8rem; }
+.cvt-headline .cvt-field { display: inline-flex; }
+.cvt-chiprow { display: flex; flex-wrap: wrap; gap: .8rem 1.2rem; align-items: center; margin-bottom: 1rem; }
+.cvt-chipgroup { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
+.cvt-chipgroup-label { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: #9a9ab0; margin-right: .2rem; }
+.cvt-chip { padding: .25rem .7rem; border-radius: 999px; border: 1px solid #2a2a45; background: #1c1c2e; color: #9a9ab0; cursor: pointer; font: inherit; font-size: .85rem; }
+.cvt-chip:hover { border-color: #5b5bd6; }
+.cvt-chip.on { background: #242438; border-color: #5b5bd6; color: #e8e8f0; }
+.cvt-microverso-select { padding: .25rem .5rem; border-radius: 8px; border: 1px solid #2a2a45; background: #1c1c2e; color: inherit; font: inherit; }
+.cvt-ambig-nudge { margin: .4rem 0; }
+
+/* MOD-016 (C1) — método colapsado */
+.cvt-collapse { margin: 1rem 0; }
+.cvt-collapse-toggle { font-size: .85rem; }
+.cvt-collapse-body { margin-top: .6rem; }
+
+/* MOD-016 (C1) — zonas do Curador de 1ª classe (a .cvt-curador-zone acima fica
+   inerte/deprecada: a classe não é mais emitida) */
+.cvt-cur-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: .8rem; margin-bottom: 1rem; }
+.cvt-cur-subzone h2 { margin: 0 0 .4rem; font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: #9a9ab0; }
+.cvt-cur-list { list-style: none; margin: 0; padding: 0; font-size: .85rem; }
+.cvt-cur-list li { padding: .15rem 0; word-break: break-word; }
+.cvt-cur-skill { color: #7ad0ff; }
+.cvt-cur-pending { margin-bottom: 1rem; }
