@@ -33,8 +33,12 @@
   ];
   const FIELD_BY_PATH = {};
   FIELDS.forEach((f) => { FIELD_BY_PATH[f.path] = f; });
-  const GRID_FIELDS = FIELDS.filter(
-    (f) => f.path !== "/done_criteria" && f.path !== "/verification");
+  // C1: os 3 enums fixos viram grupos de chips (não mais pencil+select).
+  const CHIP_GROUPS = [
+    { label: "Vetor", path: "/vetor", options: VETOR_OPTS },
+    { label: "Tipo de intenção", path: "/intent_type", options: INTENT_OPTS },
+    { label: "Formato", path: "/shape", options: SHAPE_OPTS },
+  ];
 
   const LIST_FIELDS = [
     { path: "/gaps", label: "Lacunas" },
@@ -52,6 +56,7 @@
     built: false, open: false, view: "hangar", cid: "",
     es: null, cursor: 0, reconnectTimer: null,
     valid: null, errors: [],
+    microversos: [], microversosLoaded: false,
   };
 
   // ── RFC 6902 subset (from F0 — reused verbatim, exposed as CVT.applyPatch) ──
@@ -134,8 +139,59 @@
       `<button type="button" class="cvt-pencil" aria-label="Editar">✎</button></span>`;
   }
 
-  function fieldZoneHtml(f) {
-    return zona(f.label, editableSpanHtml(f.path, ptrGet(canvas, f.path)));
+  function headlineHtml() {
+    // display cai p/ original_input_summary quando focus vazio, mas a edição
+    // SEMPRE grava o campo focus (whitelisted); o campo original_input_summary
+    // nunca vira PATCH-target. (NÃO escreva um pointer com barra neste comentário
+    // referenciando esse campo — o source-lint assere no arquivo cru que ele
+    // nunca aparece como alvo de PATCH.)
+    const frase = canvas.focus || canvas.original_input_summary || "";
+    return '<div class="cvt-headline">' + editableSpanHtml("/focus", frase) + "</div>";
+  }
+
+  function chipHtml(path, value, current) {
+    const on = value === current;
+    const tint = path === "/vetor" ? " cvt-vetor-" + esc(value) : "";
+    return '<button type="button" class="cvt-chip' + (on ? " on" : "") + tint +
+      '" data-field="' + esc(path) + '" data-value="' + esc(value) +
+      '" aria-pressed="' + (on ? "true" : "false") + '">' + esc(value) + "</button>";
+  }
+
+  function chipGroupHtml(g) {
+    const current = ptrGet(canvas, g.path);
+    return '<div class="cvt-chipgroup" role="group" aria-label="' + esc(g.label) + '">' +
+      '<span class="cvt-chipgroup-label">' + esc(g.label) + "</span>" +
+      g.options.map((o) => chipHtml(g.path, o, current)).join("") + "</div>";
+  }
+
+  function microversoSelectHtml() {
+    const cur = ptrGet(canvas, "/microversos/primary");
+    const slugs = state.microversos || [];
+    // fix-2: sem lista (endpoint [] / sem acervo) OU valor guardado fora dos 13
+    // slugs → controle free-text ✎, que sempre mostra o valor real (não deixa o
+    // <select> auto-selecionar o slug 0 silenciosamente).
+    if (!slugs.length || (cur && !slugs.includes(cur))) {
+      return '<div class="cvt-chipgroup"><span class="cvt-chipgroup-label">Microverso</span>' +
+        editableSpanHtml("/microversos/primary", cur) + "</div>";
+    }
+    const placeholder = cur ? "" :
+      '<option value="" selected disabled>microverso…</option>';
+    const opts = slugs.map((s) =>            // fix-4: esc() no value e no label
+      '<option value="' + esc(s) + '"' + (s === cur ? " selected" : "") + ">" +
+      esc(s) + "</option>").join("");
+    return '<div class="cvt-chipgroup"><span class="cvt-chipgroup-label">Microverso</span>' +
+      '<select class="cvt-microverso-select" data-field="/microversos/primary">' +
+      placeholder + opts + "</select></div>";
+  }
+
+  function chipRowHtml() {
+    return '<div class="cvt-chiprow">' +
+      CHIP_GROUPS.map(chipGroupHtml).join("") + microversoSelectHtml() + "</div>";
+  }
+
+  function ambiguousNudgeHtml() {
+    return '<div class="cvt-ambig-nudge"><span class="cvt-chip-amber">' +
+      "resolver: escolha o vetor</span></div>";
   }
 
   function listZoneHtml(f) {
@@ -156,13 +212,6 @@
       editableSpanHtml("/done_criteria", done) + "</div>" +
       `<div class="cvt-pronto-row"><label class="cvt-row-label">Verificação</label>` +
       editableSpanHtml("/verification", verif) + "</div>";
-  }
-
-  function ambiguousCardHtml() {
-    return '<div class="cvt-ambig"><p>Vetor ambíguo — como tratar esta tarefa?</p>' +
-      '<button type="button" class="cvt-ambig-btn" data-vetor="execucao">Executar</button>' +
-      '<button type="button" class="cvt-ambig-btn" data-vetor="evolucao">Explorar</button>' +
-      '<button type="button" class="cvt-ambig-btn" data-vetor="manutencao">Manter</button></div>';
   }
 
   function cockpitHeaderHtml() {
@@ -188,8 +237,9 @@
     if (!canvas) return;
     const el = _root().querySelector("#cvt-cockpit");
     let html = cockpitHeaderHtml();
-    if (canvas.vetor === "ambiguo") html += ambiguousCardHtml();
-    html += '<div class="cvt-canvas">' + GRID_FIELDS.map(fieldZoneHtml).join("") + "</div>";
+    html += headlineHtml();
+    if (canvas.vetor === "ambiguo") html += ambiguousNudgeHtml();
+    html += chipRowHtml();
     html += '<div class="cvt-zona cvt-zona-pronto">' + doneZoneHtml() + "</div>";
     html += '<div class="cvt-canvas">' + LIST_FIELDS.map(listZoneHtml).join("") + "</div>";
     html += briefSectionHtml() + launchSectionHtml();
@@ -305,8 +355,8 @@
     if (editEl) { const wrap = editEl.closest(".cvt-field"); if (wrap) startEdit(wrap); return; }
     const xBtn = e.target.closest(".cvt-x");
     if (xBtn) { removeItem(xBtn.dataset.list, Number(xBtn.dataset.idx)); return; }
-    const ambigBtn = e.target.closest(".cvt-ambig-btn");
-    if (ambigBtn) { submitOps([{ op: "replace", path: "/vetor", value: ambigBtn.dataset.vetor }]); return; }
+    const chip = e.target.closest(".cvt-chip");
+    if (chip) { submitOps([{ op: "replace", path: chip.dataset.field, value: chip.dataset.value }]); return; }
     if (e.target.closest("#cvt-brief-btn")) { toggleBrief(); return; }
     if (e.target.closest("#cvt-launch-btn")) { launchCanvas(); return; }
     const goto = e.target.closest("#cvt-goto-chat");
@@ -395,6 +445,11 @@
     state.cursor = 0;
     setValidity(null, []);
     switchView("cockpit");
+    if (!state.microversosLoaded) {
+      try { state.microversos = await getJSON("/api/canvas/microversos"); }
+      catch (_) { state.microversos = []; }
+      state.microversosLoaded = true;
+    }
     status("carregando…");
     try {
       canvas = await getJSON("/api/canvas/get?canvas_id=" + encodeURIComponent(cid));
@@ -456,6 +511,10 @@
     });
     root.querySelector("#cvt-cockpit").addEventListener("click", onCockpitClick);
     root.querySelector("#cvt-cockpit").addEventListener("keydown", onCockpitKeydown);
+    root.querySelector("#cvt-cockpit").addEventListener("change", (e) => {
+      const sel = e.target.closest(".cvt-microverso-select");
+      if (sel) submitOps([{ op: "replace", path: sel.dataset.field, value: sel.value }]);
+    });
     root.addEventListener("keydown", (e) => {
       if (e.key !== "Escape") return;
       const tag = (e.target && e.target.tagName || "").toLowerCase();
