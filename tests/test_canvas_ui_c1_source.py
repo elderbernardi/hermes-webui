@@ -48,3 +48,19 @@ def test_css_declutter_presente():
     css = _css()
     for cls in (".cvt-headline", ".cvt-chiprow", ".cvt-chip", ".cvt-chip.on"):
         assert cls in css
+
+
+def test_detalhes_metodo_colapsado_via_state():
+    js = _js()
+    assert "cvt-collapse-toggle" in js
+    assert "state.methodOpen" in js
+    assert "methodCollapseHtml" in js
+    # os campos de método moram DENTRO do colapso (via LIST_BY_PATH), não no fluxo
+    for expr in ('LIST_BY_PATH["/scope"]', 'LIST_BY_PATH["/assumptions"]',
+                 'LIST_BY_PATH["/next_moves"]', 'LIST_BY_PATH["/microversos/related"]'):
+        assert expr in js
+    # o grid plano antigo (todas as listas) foi desmontado
+    assert "LIST_FIELDS.map(listZoneHtml)" not in js
+    # fluxo principal = só lacunas + artefatos
+    assert 'LIST_BY_PATH["/gaps"]' in js
+    assert 'LIST_BY_PATH["/artifacts/expected"]' in js

@@ -98,3 +98,8 @@
 .cvt-chip:hover { border-color: #5b5bd6; }
 .cvt-chip.on { background: #242438; border-color: #5b5bd6; color: #e8e8f0; }
 .cvt-microverso-select { padding: .25rem .5rem; border-radius: 8px; border: 1px solid #2a2a45; background: #1c1c2e; color: inherit; font: inherit; }
+
+/* MOD-016 (C1) — método colapsado */
+.cvt-collapse { margin: 1rem 0; }
+.cvt-collapse-toggle { font-size: .85rem; }
+.cvt-collapse-body { margin-top: .6rem; }

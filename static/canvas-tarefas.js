@@ -48,6 +48,8 @@
     { path: "/artifacts/expected", label: "Artefatos esperados" },
     { path: "/next_moves", label: "Próximos passos" },
   ];
+  const LIST_BY_PATH = {};
+  LIST_FIELDS.forEach((f) => { LIST_BY_PATH[f.path] = f; });
 
   const RECONNECT_MS = 1500;
 
@@ -56,7 +58,7 @@
     built: false, open: false, view: "hangar", cid: "",
     es: null, cursor: 0, reconnectTimer: null,
     valid: null, errors: [],
-    microversos: [], microversosLoaded: false,
+    microversos: [], microversosLoaded: false, methodOpen: false,
   };
 
   // ── RFC 6902 subset (from F0 — reused verbatim, exposed as CVT.applyPatch) ──
@@ -214,6 +216,25 @@
       editableSpanHtml("/verification", verif) + "</div>";
   }
 
+  function methodCollapseHtml() {
+    // state.methodOpen threaded no state (igual state.valid) — sobrevive ao
+    // el.innerHTML wholesale de cada frame SSE. Corpo por render condicional.
+    const open = !!state.methodOpen;
+    const body = open ? (
+      '<div class="cvt-collapse-body">' +
+        '<div class="cvt-zona cvt-zona-pronto">' + doneZoneHtml() + "</div>" +
+        '<div class="cvt-canvas">' +
+          listZoneHtml(LIST_BY_PATH["/scope"]) +
+          listZoneHtml(LIST_BY_PATH["/assumptions"]) +
+          listZoneHtml(LIST_BY_PATH["/next_moves"]) +
+          listZoneHtml(LIST_BY_PATH["/microversos/related"]) +
+        "</div></div>"
+    ) : "";
+    return '<div class="cvt-collapse">' +
+      '<button type="button" class="cvt-collapse-toggle cvt-link">' +
+      (open ? "▾" : "▸") + " Detalhes do método</button>" + body + "</div>";
+  }
+
   function cockpitHeaderHtml() {
     let badge = "";
     if (state.valid === true) badge = '<span class="cvt-badge cvt-badge-ok">✓ válido</span>';
@@ -240,8 +261,10 @@
     html += headlineHtml();
     if (canvas.vetor === "ambiguo") html += ambiguousNudgeHtml();
     html += chipRowHtml();
-    html += '<div class="cvt-zona cvt-zona-pronto">' + doneZoneHtml() + "</div>";
-    html += '<div class="cvt-canvas">' + LIST_FIELDS.map(listZoneHtml).join("") + "</div>";
+    html += '<div class="cvt-canvas">' +
+      listZoneHtml(LIST_BY_PATH["/gaps"]) +
+      listZoneHtml(LIST_BY_PATH["/artifacts/expected"]) + "</div>";
+    html += methodCollapseHtml();
     html += briefSectionHtml() + launchSectionHtml();
     el.innerHTML = html;
   }
@@ -357,6 +380,7 @@
     if (xBtn) { removeItem(xBtn.dataset.list, Number(xBtn.dataset.idx)); return; }
     const chip = e.target.closest(".cvt-chip");
     if (chip) { submitOps([{ op: "replace", path: chip.dataset.field, value: chip.dataset.value }]); return; }
+    if (e.target.closest(".cvt-collapse-toggle")) { state.methodOpen = !state.methodOpen; renderCockpit(); return; }
     if (e.target.closest("#cvt-brief-btn")) { toggleBrief(); return; }
     if (e.target.closest("#cvt-launch-btn")) { launchCanvas(); return; }
     const goto = e.target.closest("#cvt-goto-chat");
