@@ -347,6 +347,18 @@ def _list_canvases() -> list[dict]:
     return out
 
 
+def _list_microversos() -> list[str]:
+    """GET /api/canvas/microversos (C1/MOD-016) — slugs reais em $ACERVO/micro
+    para o dropdown do Cockpit. Reusa a MESMA resolução de acervo e o MESMO
+    filtro (_/. ignorados) do Curador; try/except → [] mantém a UI-only
+    funcional sem acervo montado (200 [], nunca 500)."""
+    from api import curador_capabilities
+    try:
+        return curador_capabilities._microverso_slugs(canvas_store.acervo_root())
+    except Exception:
+        return []
+
+
 def _stream_events(handler, job: dict, cursor: int) -> None:
     handler.send_response(200)
     handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -412,6 +424,9 @@ def handle_canvas_get(handler, parsed) -> bool:
             _j(handler, {"error": str(exc)}, 400)
             return True
         _j(handler, {"brief": texto})
+        return True
+    if parsed.path == "/api/canvas/microversos":
+        _j(handler, _list_microversos())
         return True
     if parsed.path != "/api/canvas/stream":
         return False
