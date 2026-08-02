@@ -159,6 +159,81 @@ As cinco modificações abaixo introduzem a skin `excrtx` e o rebranding Hermes 
 
 Des-burocratiza o Cockpit: a frase vira headline; `vetor`/`intent_type`/`shape` viram chips; microverso vira dropdown dos microversos reais (novo endpoint aditivo `GET /api/canvas/microversos`, read-only, lê `$ACERVO/micro` com o mesmo filtro do Curador); método colapsado. Termina o E3: Acervo Aplicado/Personas/Skills sugeridas viram zonas de 1ª classe DENTRO do `renderCockpit`, alimentadas pelo Curador — a ilha `canvas-curador.js` (MOD-013) é **absorvida** como helper `fill()` (mata `#cvt-curador-zone`+`MutationObserver`). **0 linhas em `routes.py`, 0 deps, 0 build.** Zona quente e `window.CVT`/`canvas-sala.js` (MOD-014) intactos. Contrato: superfície aditiva §(h) (umbrella). Skill-usage de domínio = só citação no brief (carregar-na-sessão = C3/F5).
 
+### MOD-017: Canvas de Tarefas — F4 Colheita & Canonização
+
+- **Resumo:** fecha o ciclo de crescimento do Canvas de Tarefas (meta issue `elderbernardi/exocortex.saas#130`). Entrega: (1) a **bandeja de colheita** (`api/canvas_colheita.py`) que acumula candidatos de canonização sem interrupção — alimentada por linhas conduct `{t:harvest}` emitidas pelo agente via o exocortex (EX-60, MOD-014-aware) **e** por adoção manual de cards da Sala viva; (2) o **pipeline canvas → receita** (`api/canvas_receita.py`) que limpa a instância (clean-portable) e grava o objeto OKF v0.2 no microverso `receitas`; (3) o **fable-judge mecânico** (keyless) de checkout — verifica por execução, nunca lendo relatório; (4) a **ilha de UI** (`static/canvas-colheita.js`) com zona Colheita no Cockpit (badges de gate, diff sob demanda, Aprovar tudo / Item a item / Rejeitar) e a **galeria de receitas** aditiva no Hangar (`static/canvas-tarefas.js`). A escrita no acervo cruza **exclusivamente** pela superfície governada `acervoctl` (two-phase `prepare`→`commit-write`, guardrails trust/risk por item), nunca por acesso direto ao FS.
+- **Tipo:** backend (novos endpoints, forward dispatch, 0 linhas em `routes.py`) + frontend (ilha nova, galeria aditiva) + testes. **Feature entregue** (F4 do épico Canvas de Tarefas).
+
+#### Endpoints (todos forward-dispatched em `api/canvas_tarefas.py` — 0 linhas em `routes.py`)
+
+**Colheita** (`/api/canvas/colheita/*`):
+
+| Método/rota | Request → Response |
+|---|---|
+| `GET /api/canvas/colheita/list?canvas_id=` | → `[card]` (bandeja completa) |
+| `GET /api/canvas/colheita/stream?canvas_id=&since=N` | SSE re-anexável — eventos `colheita_{candidate,prepared,committed,rejected}` (log `COLHEITA_ROOMS`) |
+| `POST /api/canvas/colheita/adotar` | `{canvas_id, source_event, nature?, scope?}` → `{card_id}` (card `pending`, `origin:manual`) |
+| `POST /api/canvas/colheita/preparar` | `{canvas_id}` → roda `acervoctl prepare` por card pendente → receipt/diff → `prepared` **(propose)** |
+| `POST /api/canvas/colheita/checkout` | `{canvas_id, mode: aprovar_tudo\|item_a_item, decisions:[{card_id, action: aprovar\|rejeitar}]}` → roda `acervoctl commit-write` nos aprovados → fable-judge mecânico → `{summary}` **(approve→commit)** |
+
+**Receita** (`/api/canvas/receita/*`):
+
+| Método/rota | Request → Response |
+|---|---|
+| `POST /api/canvas/receita/canonizar` | `{canvas_id}` → clean-portable + `acervoctl prepare-write`+`commit-write` no microverso `receitas` → `{recipe_id, path}` |
+| `GET /api/canvas/receita/list` | → `[{recipe_id, focus_template, vetor, path}]` (lê `micro/receitas/`) |
+| `POST /api/canvas/receita/iniciar` | `{recipe_id}` → cria canvas novo via `canvas_store.create_draft` pré-preenchido → `{canvas_id}` |
+
+#### SSE — Eventos da Colheita
+
+Registrados em `COLHEITA_ROOMS[cid]["events"]` (log próprio, não `CANVAS_JOBS`/`CURADOR_ROOMS`/`SALA_ROOMS`). Nomes estáveis:
+`colheita_candidate {canvas_id, card_id, title, nature, scope, class, source_trust, gate, status}` · `colheita_prepared {canvas_id, card_id, receipt, gate}` · `colheita_committed {canvas_id, card_id, judge_ok, judge_notes}` · `colheita_rejected {canvas_id, card_id}`.
+
+#### Store e modelo de dados
+
+- **`_tasks/<canvas_id>/colheita.jsonl`** — bandeja append-only; card: `{id, nature, scope, title, porque, ref?, body?, class, source_trust, gate, status, receipt?}`. `gate` auto-computado: `perene|persona|macro` → `draft-first`; `source_trust:web` → `forced-draft`; demais → `auto`. `status ∈ pending|prepared|approved|committed|committed_unverified|rejected`.
+- **Receitas** — objetos OKF v0.2 no microverso `receitas` (`micro/receitas/`, `type: template|workflow`, `class: perene`); `focus_template` vive no frontmatter (o `clean_portable` escaneia **só o corpo** — o `judge_committed` segue a mesma regra: `_body_after_frontmatter` antes de verificar padrões de instância/segredo).
+
+#### Caminho de escrita (governado)
+
+O fork **nunca escreve diretamente no FS do acervo**. A escrita segue o two-phase `acervoctl`:
+1. `acervoctl prepare[-write]` → gera `receipt` + `diff` (propose).
+2. HITL em lote (checkout) → `acervoctl commit-write --receipt <path> --content-file <path> --class-name <class> --source-trust <trust>` — guard tighten-only (não afrouxa trust vs. receipt), gates `guard_scope + trust/risk` aplicados dentro do CLI.
+3. **fable-judge mecânico** pós-commit: (1) arquivo-alvo existe; (2) `validate_frontmatter.py` exit 0; (3) `clean_portable` OK (scan do corpo, sem `canvas_id`/`session_id`/`task_id`/padrões de segredo); (4) `_meta/log.md` ganhou a entrada. Falha → card `committed_unverified` (nunca silencioso).
+
+`ACERVOCTL_CMD` env resolve o CLI no runtime de produção; no seam de testes = fake handler (keyless, consistente com `CANVAS_LLM_CMD` do F1/F2/F3).
+
+#### Arquivos novos / modificados
+
+**Novos (fork-owned, zero conflito upstream):**
+- `api/canvas_colheita.py` — bandeja + SSE + prepare/checkout + fable-judge.
+- `api/canvas_receita.py` — clean-portable + canonizar/list/iniciar.
+- `static/canvas-colheita.js` — ilha UI (clone de `canvas-sala.js`): `#cvt-colheita-zone`, EventSource em `/api/canvas/colheita/stream`, renderer por card com badge de gate + diff sob demanda + controles Preparar/Aprovar/Rejeitar/Adotar; botão "Canonizar sala como receita" → `receita/canonizar`.
+- `tests/test_canvas_colheita.py`, `tests/test_canvas_receita.py` — suítes keyless (pytest + FakeHandler).
+
+**Modificados (fork-owned — edições aditivas):**
+- `api/canvas_tarefas.py` — forward dispatch para `/api/canvas/{colheita,receita}/*` (padrão MOD-013/014; `routes.py` byte-untouched).
+- `static/canvas-tarefas.js` — galeria "Receitas" aditiva no `renderHangar()` (fetch `/api/canvas/receita/list`; card → `receita/iniciar` → Cockpit pré-preenchido).
+- `static/canvas-tarefas.css` — classes `.cvt-colheita-*` append-only.
+- `static/canvas-dev.html` — `<script defer>` da ilha colheita.
+
+**Intocados (hot zone + routes):**
+`api/routes.py` · `static/{ui,messages,sessions,panels,boot}.js` · `static/style.css` · `static/index.html`.
+
+#### Relação com MOD-011/012/013/014/016
+
+Construído sobre MOD-016 (C1) já mergeado em `exocortex/stable@595e19c3`, na branch `collab/canvas-f4`. O forward da Colheita/Receita roda ao lado dos forwards do Curador e da Sala dentro de `handle_canvas_get/post`, sem tocar nenhuma lógica existente.
+
+#### Rebase-safety
+
+Comportamento novo em arquivos **novos** (`api/canvas_colheita.py`, `api/canvas_receita.py`, `static/canvas-colheita.js`, suítes de teste); edições aditivas em arquivos fork-owned do MOD-011..016 (`api/canvas_tarefas.py` forward, `static/canvas-tarefas.{js,css}`, `static/canvas-dev.html`). A zona quente e `routes.py` ficam byte-untouched por construção.
+
+- **Conflito provável:** `api/routes.py` — nulo (0 linhas). `api/canvas_tarefas.py`/`static/canvas-tarefas.js`/`canvas-tarefas.css`/`canvas-dev.html` — baixo (edições aditivas pequenas, mesmo padrão dos MODs anteriores). Demais arquivos do MOD-017 — nulo (novos).
+
+#### Registro
+
+Spec: `exocortex.saas/docs/superpowers/specs/2026-08-01-canvas-f4-colheita-canonizacao-design.md`. Plano: `exocortex.saas/.superpowers/sdd/F4-PLANO/`. Meta-issue: `elderbernardi/exocortex.saas#130`. Contrato: `projetob/.harness/contracts/exocortex-hermes-webui.md` §(i)/§(j)/§(g) (v1.4). Change record COLLAB: `.harness/changes/2026-08-01_COLLAB_canvas-f4-colheita.md`. Testes: `tests/test_canvas_colheita.py` (15 + 18 regressão routes) · `tests/test_canvas_receita.py` (10 + 18 regressão routes) · `tests/test_canvas_sala.py` (21 F4 bridge).
+
 ---
 
 ## Workflow de atualização (rebase)
