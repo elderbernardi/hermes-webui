@@ -61,7 +61,12 @@
     // ação "colher" apenas em candidate / rejected
     const colherBtn = (c.kind === "candidate" || c.kind === "rejected")
       ? `<button type="button" class="cvt-colheita-colher" data-id="${esc(id)}">Colher</button>` : "";
-    return `<div class="cvt-colheita-card cvt-colheita-${esc(c.kind)}" data-id="${esc(id)}">${title}${sub}${diffBtn}${diffPre}${colherBtn}</div>`;
+    // botões por card em modo item-a-item (apenas para cards prepared)
+    const itemButtons = (state.mode === "item-a-item" && c.kind === "prepared")
+      ? `<button type="button" class="cvt-colheita-aprovar-item cvt-btn cvt-btn-primary" data-id="${esc(id)}">Aprovar</button>` +
+        `<button type="button" class="cvt-colheita-rejeitar-item cvt-btn cvt-colheita-btn-danger" data-id="${esc(id)}">Rejeitar</button>`
+      : "";
+    return `<div class="cvt-colheita-card cvt-colheita-${esc(c.kind)}" data-id="${esc(id)}">${title}${sub}${diffBtn}${diffPre}${colherBtn}${itemButtons}</div>`;
   }
 
   // ── controles de checkout ───────────────────────────────────────────────────
@@ -158,7 +163,7 @@
 
   // ── ações ───────────────────────────────────────────────────────────────────
 
-  // "diff sob demanda": busca o receipt do card e exibe inline
+  // "diff sob demanda": exibe receipt inline se disponível no card
   async function _showDiff(id) {
     const c = state.cards[id];
     const z = _zone();
@@ -166,18 +171,9 @@
     const pre = z.querySelector("#cvt-col-receipt-" + id);
     if (!pre) return;
     if (!pre.hidden) { pre.hidden = true; return; }
-    if (c.receipt) { pre.textContent = c.receipt; pre.hidden = false; return; }
-    // receipt não foi emitido inline → buscar via artifact_id
-    if (c.artifact_id) {
-      try {
-        const r = await fetch("/api/canvas/colheita/receipt?artifact_id=" +
-          encodeURIComponent(c.artifact_id));
-        const d = await r.json().catch(() => ({}));
-        pre.textContent = d.receipt || "(sem diff)";
-      } catch (_) { pre.textContent = "(erro ao buscar diff)"; }
-    } else {
-      pre.textContent = "(sem diff disponível)";
-    }
+    // usa apenas o receipt inline do evento SSE (colheita_prepared / colheita_candidate)
+    // não há endpoint GET para buscar diff — exibe o que veio no payload ou mensagem padrão
+    pre.textContent = c.receipt || "(sem diff disponível)";
     pre.hidden = false;
   }
 
@@ -212,10 +208,27 @@
     } catch (_) {}
   }
 
-  // item a item: trocar para modo guiado
+  // item a item: trocar para modo guiado (per-card approval)
   function _itemAItem() {
     state.mode = "item-a-item";
     render();
+  }
+
+  // decisão individual: aprovar ou rejeitar um único card
+  async function _decidirItem(cardId, action) {
+    if (!state.cid) return;
+    try {
+      await postJSON("/api/canvas/colheita/checkout", {
+        canvas_id: state.cid,
+        mode: "item_a_item",
+        decisions: [{ card_id: cardId, action: action }],
+      });
+      delete state.cards[cardId];
+      // se não restam cards prepared, sair do modo item-a-item
+      const remaining = Object.values(state.cards).filter((c) => c.kind === "prepared");
+      if (!remaining.length) { state.prepared = null; state.mode = null; }
+      render();
+    } catch (_) {}
   }
 
   // rejeitar tudo
@@ -236,6 +249,12 @@
     const colher = e.target.closest(".cvt-colheita-colher");
     if (colher) { _colher(colher.dataset.id); return; }
 
+    const aprovarItem = e.target.closest(".cvt-colheita-aprovar-item");
+    if (aprovarItem) { _decidirItem(aprovarItem.dataset.id, "aprovar"); return; }
+
+    const rejeitarItem = e.target.closest(".cvt-colheita-rejeitar-item");
+    if (rejeitarItem) { _decidirItem(rejeitarItem.dataset.id, "rejeitar"); return; }
+
     if (e.target.id === "cvt-col-preparar") { _preparar(); return; }
     if (e.target.id === "cvt-col-aprovar-tudo") { _aprovarTudo(); return; }
     if (e.target.id === "cvt-col-item-a-item") { _itemAItem(); return; }
@@ -244,6 +263,8 @@
 
   // ── API pública ─────────────────────────────────────────────────────────────
   function onCockpitOpen(cid) {
+    // idempotente: se já aberto para este cid com stream ativo, não faz nada (I3)
+    if (state.cid === cid && state.es) return;
     state.cid = cid; state.cursor = 0; state.cards = {};
     state.prepared = null; state.mode = null;
     render(); _openStream(cid);
