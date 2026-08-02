@@ -283,6 +283,9 @@ def _handle_launch(handler, body: dict) -> None:
 
 
 def handle_canvas_post(handler, path: str, body: dict) -> bool:
+    if path.startswith("/api/canvas/receita/"):   # MOD-017 (F4): forward à Receita
+        from api.canvas_receita import handle_receita_post
+        return handle_receita_post(handler, path, body)
     if path.startswith("/api/canvas/colheita/"):  # MOD-015 (F4): forward à Colheita
         from api.canvas_colheita import handle_colheita_post
         return handle_colheita_post(handler, path, body)
@@ -389,6 +392,9 @@ def _stream_events(handler, job: dict, cursor: int) -> None:
 
 
 def handle_canvas_get(handler, parsed) -> bool:
+    if parsed.path.startswith("/api/canvas/receita/"):   # MOD-017 (F4): forward à Receita
+        from api.canvas_receita import handle_receita_get
+        return handle_receita_get(handler, parsed)
     if parsed.path.startswith("/api/canvas/colheita/"):  # MOD-015 (F4): forward à Colheita
         from api.canvas_colheita import handle_colheita_get
         return handle_colheita_get(handler, parsed)
