@@ -277,6 +277,10 @@
       listZoneHtml(LIST_BY_PATH["/artifacts/expected"]) + "</div>";
     html += methodCollapseHtml();
     html += briefSectionHtml() + launchSectionHtml();
+    // MOD-018 (F4/Task-8b) — botão "Canonizar sala como receita"
+    html += '<div class="cvt-receita-canonizar">' +
+      '<button type="button" id="cvt-canonizar-btn" class="cvt-btn">' +
+      'Canonizar sala como receita</button></div>';
     // reserva zona da Colheita (MOD-017 / F4) — a ilha canvas-colheita.js preenche
     html += '<div id="cvt-colheita-zone" class="cvt-zona cvt-colheita-zone"></div>';
     el.innerHTML = html;
@@ -300,15 +304,61 @@
       `<span class="cvt-card-status">${esc(c.status || "")}</span></div></div>`;
   }
 
+  // MOD-018 (F4/Task-8b) — galeria de receitas: card de receita para o Hangar
+  function receitaCardHtml(r) {
+    const focus_template = r.focus_template || "(sem foco)";
+    const vetor = r.vetor || "";
+    const recipe_id = r.recipe_id || r.id || "";
+    return '<div class="cvt-receita-card" data-recipe-id="' + esc(recipe_id) + '">' +
+      '<div class="cvt-receita-card-focus">' + esc(focus_template) + "</div>" +
+      '<div class="cvt-receita-card-meta">' +
+      (vetor ? '<span class="cvt-vetor cvt-vetor-' + esc(vetor) + '">' + esc(vetor) + "</span>" : "") +
+      "</div></div>";
+  }
+
+  // MOD-018 (F4/Task-8b) — iniciar canvas a partir de uma receita
+  async function iniciarDeReceita(recipe_id) {
+    status("iniciando receita…");
+    let resp;
+    try { resp = await postJSON("/api/canvas/receita/iniciar", { recipe_id }); }
+    catch (e) { status("erro ao iniciar receita: " + e.message, true); return; }
+    status("");
+    abrirCockpit(resp.canvas_id);
+  }
+
+  // MOD-018 (F4/Task-8b) — canonizar a sala atual como receita
+  async function canonizarReceita(canvas_id) {
+    status("canonizando…");
+    try {
+      await postJSON("/api/canvas/receita/canonizar", { canvas_id });
+      status("");
+      _toast("Sala canonizada como receita.");
+    } catch (e) {
+      status("erro ao canonizar: " + e.message, true);
+    }
+  }
+
   async function renderHangar() {
     const el = _root().querySelector("#cvt-hangar");
     el.innerHTML = '<p class="cvt-empty">carregando…</p>';
     let list;
     try { list = await getJSON("/api/canvas/list"); }
     catch (e) { el.innerHTML = '<p class="cvt-empty">erro ao listar tarefas</p>'; return; }
-    el.innerHTML = list.length
+    let html = list.length
       ? '<div class="cvt-cards">' + list.map(cardHtml).join("") + "</div>"
       : '<p class="cvt-empty">Nenhuma tarefa ainda — descreva algo acima para começar.</p>';
+
+    // MOD-018 (F4/Task-8b) — seção Receitas: galeria de templates canônicos
+    let receitas = [];
+    try { receitas = await getJSON("/api/canvas/receita/list"); } catch (_) {}
+    if (receitas.length) {
+      html += '<div class="cvt-receita-section">' +
+        '<h2 class="cvt-receita-title">Receitas</h2>' +
+        '<div class="cvt-receita-cards">' +
+        receitas.map(receitaCardHtml).join("") +
+        "</div></div>";
+    }
+    el.innerHTML = html;
   }
 
   function switchView(view) {
@@ -414,6 +464,8 @@
       return;
     }
     if (e.target.closest("#cvt-back")) backToHangar();
+    // MOD-018 (F4/Task-8b) — canonizar sala como receita
+    if (e.target.closest("#cvt-canonizar-btn")) { canonizarReceita(state.cid); return; }
   }
   function onCockpitKeydown(e) {
     if (e.key === "Enter" && e.target.classList.contains("cvt-add")) {
@@ -554,6 +606,9 @@
     root.querySelector("#cvt-hangar").addEventListener("click", (e) => {
       const card = e.target.closest(".cvt-card");
       if (card) abrirCockpit(card.dataset.cid);
+      // MOD-018 (F4/Task-8b) — clique em card de receita
+      const receitaCard = e.target.closest(".cvt-receita-card");
+      if (receitaCard) iniciarDeReceita(receitaCard.dataset.recipeId);
     });
     root.querySelector("#cvt-cockpit").addEventListener("click", onCockpitClick);
     root.querySelector("#cvt-cockpit").addEventListener("keydown", onCockpitKeydown);

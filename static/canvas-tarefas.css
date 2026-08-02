@@ -135,3 +135,15 @@
 .cvt-colheita-badge-auto          { background: #102a1a; color: #9ef0a0; }
 .cvt-colheita-controls { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .6rem; }
 .cvt-colheita-btn-danger { border-color: #7a1a1a; color: #ff8080; }
+
+/* MOD-018 (F4/Task-8b) — galeria de receitas no Hangar + botão canonizar */
+.cvt-receita-section { margin-top: 1.2rem; }
+.cvt-receita-title { margin: 0 0 .5rem; font-size: .8rem; text-transform: uppercase;
+  letter-spacing: .06em; color: #9a9ab0; }
+.cvt-receita-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: .6rem; }
+.cvt-receita-card { border: 1px solid #2a2a45; border-radius: 10px; padding: .6rem .85rem;
+  background: #1a1a2b; cursor: pointer; border-left: 3px solid #5b5bd6; }
+.cvt-receita-card:hover { border-color: #5b5bd6; }
+.cvt-receita-card-focus { font-weight: 600; margin-bottom: .25rem; font-size: .9rem; }
+.cvt-receita-card-meta { font-size: .78rem; color: #9a9ab0; }
+.cvt-receita-canonizar { margin: .8rem 0 .4rem; }
