@@ -5,8 +5,8 @@ from pathlib import Path
 from api import canvas_store
 
 _DRAFT_FIRST_NATURES = {"persona", "decision"}          # + class perene (abaixo)
-_INSTANCE_PATTERNS = [re.compile(r"canvas_\d"), re.compile(r"\bsession[_-]?id\b", re.I),
-                      re.compile(r"\btask_\d"), re.compile(r"(?i)api[_-]?key|secret|token")]
+_INSTANCE_PATTERNS = [re.compile(r"canvas_\w"), re.compile(r"\bsession[_-]?id\b", re.I),
+                      re.compile(r"\btask_\w"), re.compile(r"(?i)api[_-]?key|secret|token")]
 
 def _store(canvas_id: str) -> Path:
     return canvas_store.tasks_dir() / canvas_id / "colheita.jsonl"
@@ -14,13 +14,13 @@ def _store(canvas_id: str) -> Path:
 def compute_gate(nature: str, cls: str, source_trust: str) -> str:
     if source_trust == "untrusted":
         return "forced-draft"
-    if cls == "perene" or nature in _DRAFT_FIRST_NATURES or nature == "persona":
+    if cls == "perene" or nature in _DRAFT_FIRST_NATURES:
         return "draft-first"
     return "auto"
 
 def _new_id(cand: dict) -> str:
     seed = f"{cand.get('title','')}|{cand.get('ref') or cand.get('body','')}"
-    return "h_" + hashlib.sha1(seed.encode("utf-8")).hexdigest()[:10]
+    return "h_" + hashlib.sha1(seed.encode("utf-8"), usedforsecurity=False).hexdigest()[:10]
 
 def ingest_candidate(canvas_id: str, cand: dict) -> dict:
     cls = cand.get("class", "volátil")
@@ -41,6 +41,7 @@ def ingest_candidate(canvas_id: str, cand: dict) -> dict:
 
 def set_status(canvas_id: str, card_id: str, status: str, **extra) -> dict:
     rec = {"id": card_id, "status": status, **extra}
+    _store(canvas_id).parent.mkdir(parents=True, exist_ok=True)
     with _store(canvas_id).open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
     return rec

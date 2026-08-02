@@ -31,6 +31,7 @@ def test_set_status_last_wins(acervo):
     C.set_status("canvas_x", c["id"], "committed", receipt={"target_path": "x"})
     cards = C.list_cards("canvas_x")
     assert len(cards) == 1 and cards[0]["status"] == "committed"
+    assert cards[0]["receipt"] == {"target_path": "x"}
 
 def test_judge_committed_pass(tmp_path):
     f = tmp_path / "k.md"
