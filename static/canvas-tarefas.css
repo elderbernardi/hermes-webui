@@ -113,3 +113,25 @@
 .cvt-cur-list li { padding: .15rem 0; word-break: break-word; }
 .cvt-cur-skill { color: #7ad0ff; }
 .cvt-cur-pending { margin-bottom: 1rem; }
+
+/* MOD-017 (F4) — ilha da Colheita: bandeja de artefatos prontos para checkout */
+.cvt-colheita-zone { margin-top: .75rem; }
+.cvt-colheita-zone h2 { margin: 0 0 .4rem; font-size: .8rem; text-transform: uppercase;
+  letter-spacing: .06em; color: #9a9ab0; }
+.cvt-colheita-card { border: 1px solid var(--cvt-border, #2a2a45); border-radius: .4rem;
+  padding: .5rem .6rem; margin: .35rem 0; background: #1a1a2b; }
+.cvt-colheita-committed { border-color: #2a452a; }
+.cvt-colheita-rejected  { border-color: #7a1a1a; }
+.cvt-colheita-prepared  { border-color: #2a3a5a; }
+.cvt-colheita-title { font-weight: 600; }
+.cvt-colheita-sub { font-size: .78rem; color: #8a97a5; word-break: break-word; }
+.cvt-colheita-card button { margin-right: .4rem; margin-top: .3rem; }
+.cvt-colheita-receipt { white-space: pre-wrap; background: #0f0f18; border: 1px solid #2a2a45;
+  border-radius: 6px; padding: .5rem; font-size: .78rem; max-height: 200px; overflow: auto; }
+.cvt-colheita-badge { border-radius: 5px; padding: .1rem .45rem; font-size: .72rem;
+  margin-left: .4rem; vertical-align: middle; background: #2a2a45; color: #cdd; }
+.cvt-colheita-badge-draft-first   { background: #2e2e10; color: #ffda87; }
+.cvt-colheita-badge-forced-draft  { background: #3a1a10; color: #ffaa7d; }
+.cvt-colheita-badge-auto          { background: #102a1a; color: #9ef0a0; }
+.cvt-colheita-controls { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .6rem; }
+.cvt-colheita-btn-danger { border-color: #7a1a1a; color: #ff8080; }

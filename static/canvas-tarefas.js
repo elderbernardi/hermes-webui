@@ -277,11 +277,17 @@
       listZoneHtml(LIST_BY_PATH["/artifacts/expected"]) + "</div>";
     html += methodCollapseHtml();
     html += briefSectionHtml() + launchSectionHtml();
+    // reserva zona da Colheita (MOD-017 / F4) — a ilha canvas-colheita.js preenche
+    html += '<div id="cvt-colheita-zone" class="cvt-zona cvt-colheita-zone"></div>';
     el.innerHTML = html;
     // tail-call best-effort: a ilha preenche as zonas reservadas. fill() faz
     // no-op se o Curador ainda não está apontado p/ este cockpit (fix-3).
     if (window.CanvasCurador && window.CanvasCurador.fill) {
       try { window.CanvasCurador.fill(); } catch (_) {}
+    }
+    // MOD-017 (F4): notifica a ilha da Colheita que o cockpit foi aberto
+    if (window.CanvasColheita && window.CanvasColheita.onCockpitOpen) {
+      try { window.CanvasColheita.onCockpitOpen(state.cid); } catch (_) {}
     }
   }
 
