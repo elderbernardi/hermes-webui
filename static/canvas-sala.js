@@ -38,9 +38,16 @@
     return z;
   }
 
+  // I3: cards que produzem conhecimento portável podem ser colhidos p/ o acervo.
+  const _COLHIVEL = { artifact: true, finding: true, next_move: true };
+
   function _cardHTML(id, c) {
     const acc = c.ops && c.ops.length
       ? `<button type="button" class="cvt-sala-ok" data-id="${esc(id)}">Aceitar</button>` : "";
+    // I3: ação "Colher" → manda os dados do card da Sala p/ a bandeja de Colheita
+    // (window.CanvasColheita.colherFromSala → POST /api/canvas/colheita/adotar).
+    const colher = (_COLHIVEL[c.kind] && window.CanvasColheita)
+      ? `<button type="button" class="cvt-sala-colher" data-id="${esc(id)}">Colher</button>` : "";
     const dismiss = `<button type="button" class="cvt-sala-no" data-id="${esc(id)}">Dispensar</button>`;
     let body = `<div class="cvt-sala-title">${esc(c.title)}</div><div class="cvt-sala-sub">${esc(c.sub || "")}</div>`;
     // M5: only clarify-backed cards can be answered; an empty_search gap has no clarify_id -> no dead-end input.
@@ -52,7 +59,7 @@
         `<input type="text" class="cvt-sala-auth" data-id="${esc(id)}" placeholder="Palavras exatas de autorização…">` +
         `<button type="button" class="cvt-sala-approve" data-id="${esc(id)}">Autorizar</button>`;
     }
-    return `<div class="cvt-sala-card cvt-sala-${esc(c.kind)}" data-id="${esc(id)}">${body}${acc}${dismiss}</div>`;
+    return `<div class="cvt-sala-card cvt-sala-${esc(c.kind)}" data-id="${esc(id)}">${body}${acc}${colher}${dismiss}</div>`;
   }
 
   function render() {
@@ -76,9 +83,12 @@
     es.addEventListener("sala_phase", (e) => { cur(e); state.phase = JSON.parse(e.data).phase; render(); });
     es.addEventListener("sala_kanban", (e) => { cur(e); /* coluna projetada; chip de fase já cobre v1 */ });
     es.addEventListener("sala_artifact", (e) => { cur(e); const d = JSON.parse(e.data);
-      _put("art-" + state.cursor, { kind: "artifact", title: "📄 " + d.title, sub: d.path, ops: d.ops }); });
+      _put("art-" + state.cursor, { kind: "artifact", title: "📄 " + d.title, sub: d.path, ops: d.ops,
+        // I3: dados crus p/ colher (source_event do /adotar)
+        raw: { title: d.title, path: d.path, ref: d.path } }); });
     es.addEventListener("sala_next_move", (e) => { cur(e); const d = JSON.parse(e.data);
-      _put("nm-" + state.cursor, { kind: "next_move", title: "➡️ " + d.text, ops: d.ops }); });
+      _put("nm-" + state.cursor, { kind: "next_move", title: "➡️ " + d.text, ops: d.ops,
+        raw: { title: d.text, text: d.text, body: d.text } }); });
     es.addEventListener("sala_trace", (e) => { cur(e); const d = JSON.parse(e.data);
       _put("tr-" + state.cursor, { kind: "trace", title: "🔎 " + d.kind + ": " + d.title,
         sub: JSON.stringify(d.evidence), ops: d.ops || [] }); });
@@ -95,7 +105,9 @@
     es.addEventListener("sala_finding", (e) => { cur(e); const d = JSON.parse(e.data);
       _put("find-" + state.cursor, { kind: "finding", title: "⚠️ divergência: " + d.subject,
         sub: "código=" + d.code + " · check=" + d.check + " · spec=" + d.spec +
-             " → autoridade: " + (d.authority || []).join(">") }); });
+             " → autoridade: " + (d.authority || []).join(">"),
+        raw: { title: d.subject, subject: d.subject,
+          body: "código=" + (d.code || "") + " · check=" + (d.check || "") + " · spec=" + (d.spec || "") } }); });
     es.onerror = () => { es.close(); if (state.es === es) state.es = null; };
   }
 
@@ -140,8 +152,17 @@
     render(); _openStream(cid);
   }
 
+  // I3: colher um card da Sala → despacha p/ a bandeja de Colheita.
+  function _colher(id) {
+    const c = state.cards[id];
+    if (!c || !window.CanvasColheita || !window.CanvasColheita.colherFromSala) return;
+    try { window.CanvasColheita.colherFromSala(c.raw || { title: c.title, body: c.sub }); } catch (_) {}
+    delete state.cards[id]; render();
+  }
+
   document.addEventListener("click", (e) => {
     const ok = e.target.closest(".cvt-sala-ok"); if (ok) { _accept(ok.dataset.id); return; }
+    const colher = e.target.closest(".cvt-sala-colher"); if (colher) { _colher(colher.dataset.id); return; }
     const no = e.target.closest(".cvt-sala-no"); if (no) { delete state.cards[no.dataset.id]; render(); return; }
     const ap = e.target.closest(".cvt-sala-approve");
     if (ap) { const inp = _zone().querySelector('.cvt-sala-auth[data-id="' + ap.dataset.id + '"]');

@@ -74,3 +74,77 @@ def test_i3_oncockpitopen_is_idempotent():
     assert "state.cid === cid && state.es" in js, (
         "Idempotency guard missing from onCockpitOpen"
     )
+
+
+# ── F4 final review locks (C1/C2/I4) — align island to backend card contract ──
+
+def test_c1_no_artifact_id_field():
+    """C1: the backend never emits `artifact_id`; the island must not read it.
+
+    Every SSE payload is a card dict keyed by `id` (h_<sha1>), never artifact_id.
+    """
+    js = JS.read_text(encoding="utf-8")
+    assert "artifact_id" not in js, (
+        "Island still references artifact_id — backend emits `id`/`card_id`, not artifact_id."
+    )
+
+
+def test_c1_reads_backend_card_id():
+    """C1: SSE handlers read d.id and cards are keyed/decided by the real card id."""
+    js = JS.read_text(encoding="utf-8")
+    assert "d.id" in js, "SSE handlers must read the backend card `id` (d.id)."
+    # checkout decisions carry card_id (the real h_<sha1> id)
+    assert "card_id:" in js or '"card_id"' in js, "checkout decisions must send card_id."
+    # per-card buttons carry the real id via data-id and _decidirItem sends it as card_id
+    assert "_decidirItem" in js and "card_id: cardId" in js, (
+        "per-card decision must forward the real card id as card_id."
+    )
+
+
+def test_c1_prepared_updates_existing_card_no_synthetic_key():
+    """C1/I4: colheita_prepared UPDATES the existing card (by real id) to
+    status 'prepared' + receipt — it must NOT create a synthetic prep-/cand- key,
+    and must NOT wipe a `state.prepared` list."""
+    js = JS.read_text(encoding="utf-8")
+    # no synthetic keys derived from cursor
+    assert '"cand-"' not in js and "'cand-'" not in js and '"cand-" +' not in js, "synthetic cand- key must be gone"
+    assert '"prep-"' not in js and "'prep-'" not in js and '"prep-" +' not in js, "synthetic prep- key must be gone"
+    assert '"prep-" + state.cursor' not in js and '"cand-" + (' not in js, "synthetic cursor keys must be gone"
+    # I4: state.prepared no longer wiped from the event (no d.items assignment)
+    assert "state.prepared = d.items" not in js, (
+        "I4: colheita_prepared must not overwrite state.prepared with d.items (event has no items)."
+    )
+    # I4: no assignment to a state.prepared list anywhere (a lone comment ref is fine)
+    assert "state.prepared =" not in js, (
+        "I4: derive 'has prepared cards?' from card.status, not a state.prepared list."
+    )
+    assert "d.items" not in js, "I4: the prepared event carries no items[] array; do not read d.items."
+    # prepared-ness derived from status
+    assert 'status === "prepared"' in js or "status === 'prepared'" in js, (
+        "prepared cards must be derived from status === 'prepared'."
+    )
+
+
+def test_c2_bulk_checkout_builds_decisions_array():
+    """C2: bulk 'Aprovar tudo' / 'Rejeitar' BUILD a decisions array from all
+    currently-prepared cards and always POST decisions (backend iterates it)."""
+    js = JS.read_text(encoding="utf-8")
+    # a helper that maps prepared cards to {card_id, action}
+    assert "_bulkDecisions" in js, "bulk decisions builder missing"
+    assert "card_id: c.id" in js, "bulk decisions must carry the real card id as card_id"
+    # bulk handlers invoke the builder with the concrete actions
+    assert '_bulkDecisions("aprovar")' in js, "bulk approve must build decisions with action 'aprovar'"
+    assert '_bulkDecisions("rejeitar")' in js, "bulk reject must build decisions with action 'rejeitar'"
+    # both bulk handlers must send decisions (not just mode)
+    assert "decisions: decisions" in js, "bulk checkout must POST the built decisions array"
+    # mode strings aligned to spec/backend (aprovar_tudo / item_a_item)
+    assert "aprovar_tudo" in js, "bulk approve mode string missing"
+
+
+def test_c1_adotar_sends_source_event_not_artifact_id():
+    """C1: manual adopt (colher) POSTs /adotar with {canvas_id, source_event, nature?, scope?}."""
+    js = JS.read_text(encoding="utf-8")
+    assert "source_event:" in js or '"source_event"' in js, (
+        "/adotar body must carry source_event, not artifact_id."
+    )
+    assert "colherFromSala" in js, "colherFromSala public API missing"
