@@ -244,6 +244,21 @@ def _frame_from_conduct(obj: dict) -> dict | None:
     return None
 
 
+def _handle_conduct_frame(canvas_id: str, obj: dict) -> bool:
+    """Intercept conduct objects BEFORE the sala reducer.
+
+    Returns True (consumed) when the object is fully handled here so _poll_once
+    can `continue` without feeding it to _frame_from_conduct / the sala reducer.
+    Currently handles: t == "harvest" -> routes to colheita tray.
+    """
+    if obj.get("t") == "harvest":
+        from api import canvas_colheita
+        card = canvas_colheita.ingest_candidate(canvas_id, {**obj, "origin": "agent"})
+        canvas_colheita._emit(canvas_id, "colheita_candidate", card)
+        return True
+    return False
+
+
 def _frame_from_clarify(sid: str, payload: dict) -> dict | None:
     pend = payload.get("pending")
     if not pend:
@@ -298,6 +313,8 @@ def _poll_once(st: SalaState, ctx: dict) -> int:
     conduct_reader = _INJECTED.get("conduct") or _read_conduct_lines
     lines, ctx["conduct_off"] = conduct_reader(st.task_id, ctx["conduct_off"])
     for obj in lines:
+        if _handle_conduct_frame(st.cid, obj):
+            continue                           # harvest (and future intercepts) skip the sala reducer
         emitted += _emit_frame(st, _frame_from_conduct(obj))
     return emitted
 

@@ -143,3 +143,50 @@ def test_observer_stops_when_no_subscribers(monkeypatch, tmp_path):
             break
         _t.sleep(0.01)
     assert "sess-S" not in canvas_sala._OBSERVERS    # thread wound down + cleanup ran (no leak)
+
+
+# ── F4 Task 5: harvest conduct lines route to colheita tray ──────────────────
+def test_harvest_line_routes_to_colheita(tmp_path, monkeypatch):
+    from api import canvas_sala, canvas_colheita, canvas_store
+    monkeypatch.setattr(canvas_store, "tasks_dir", lambda: tmp_path / "_tasks")
+    (tmp_path / "_tasks" / "canvas_y").mkdir(parents=True)
+    captured = []
+    monkeypatch.setattr(canvas_colheita, "ingest_candidate",
+                        lambda cid, cand: captured.append((cid, cand)) or cand)
+    frame = {"t": "harvest", "nature": "knowledge", "scope": "s", "title": "H",
+             "porque": "p", "body": "b", "class": "perene", "source_trust": "agent"}
+    # _handle_conduct_frame returns True (consumed) and does NOT produce a sala_* frame
+    result = canvas_sala._handle_conduct_frame("canvas_y", frame)
+    assert result is True, "_handle_conduct_frame must return True for harvest"
+    assert captured, "ingest_candidate must be called"
+    assert captured[0][0] == "canvas_y"
+    assert captured[0][1]["nature"] == "knowledge"
+    assert captured[0][1]["origin"] == "agent"
+
+
+def test_harvest_line_not_in_sala_reducer(tmp_path, monkeypatch):
+    """A harvest conduct object must NOT produce any sala_* event in the room."""
+    from api import canvas_sala, canvas_colheita, canvas_store
+    from api.sala_reducer import SalaState
+    import queue as _q
+
+    monkeypatch.setattr(canvas_store, "tasks_dir", lambda: tmp_path / "_tasks")
+    (tmp_path / "_tasks" / "canvas_h").mkdir(parents=True)
+    # stub out ingest_candidate so it doesn't try to write to disk
+    monkeypatch.setattr(canvas_colheita, "ingest_candidate",
+                        lambda cid, cand: {**cand, "id": "h_stub", "status": "pending", "gate": "draft-first"})
+    # stub _emit on canvas_colheita to be a no-op (avoid SSE room side-effects)
+    monkeypatch.setattr(canvas_colheita, "_emit", lambda *a: None)
+
+    canvas_sala.SALA_ROOMS.clear()
+    st = SalaState("canvas_h", "task_h")
+    harvest_obj = {"t": "harvest", "nature": "knowledge", "scope": "s",
+                   "title": "H2", "porque": "p", "body": "b",
+                   "class": "perene", "source_trust": "agent"}
+    canvas_sala._INJECTED["conduct"] = lambda task_id, off: ([harvest_obj] if off == 0 else [], 1)
+    ctx = {"sid": "sid_h", "clarify_q": _q.Queue(), "approval_q": _q.Queue(), "conduct_off": 0}
+    n = canvas_sala._poll_once(st, ctx)
+    # No sala_* events must have been emitted
+    sala_events = canvas_sala._room("canvas_h")["events"]
+    assert sala_events == [], f"Expected no sala events, got {sala_events}"
+    canvas_sala._INJECTED.clear()
