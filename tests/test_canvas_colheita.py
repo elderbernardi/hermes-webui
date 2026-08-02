@@ -116,29 +116,30 @@ def test_adotar_creates_manual_card(acervo):
 
 def test_preparar_then_checkout_commits_and_judges(acervo, tmp_path, monkeypatch):
     _fake_acervoctl_ok(monkeypatch, tmp_path)
-    c = C.ingest_candidate("canvas-abc", {
+    canvas_id = "canvas_20260801_test"
+    c = C.ingest_candidate(canvas_id, {
         "nature": "knowledge", "scope": "receitas", "title": "n",
         "body": "corpo limpo", "class": "volátil", "source_trust": "agent", "origin": "agent",
     })
     h1 = FakeHandler()
-    assert C.handle_colheita_post(h1, "/api/canvas/colheita/preparar", {"canvas_id": "canvas-abc"})
-    assert C.list_cards("canvas-abc")[0]["status"] == "prepared"
+    assert C.handle_colheita_post(h1, "/api/canvas/colheita/preparar", {"canvas_id": canvas_id})
+    assert C.list_cards(canvas_id)[0]["status"] == "prepared"
 
     h2 = FakeHandler()
     assert C.handle_colheita_post(h2, "/api/canvas/colheita/checkout", {
-        "canvas_id": "canvas-abc",
+        "canvas_id": canvas_id,
         "mode": "aprovar_tudo",
         "decisions": [{"card_id": c["id"], "action": "aprovar"}],
     })
     summary = json.loads(h2.wfile.getvalue())
     assert summary["committed"] == 1 and summary["items"][0]["judge"]["ok"] is True
-    assert C.list_cards("canvas-abc")[0]["status"] == "committed"
+    assert C.list_cards(canvas_id)[0]["status"] == "committed"
 
-    # Verify frontmatter: ref should be canvas_id, description should be non-empty
+    # Verify frontmatter: ref should be canvas_id (in frontmatter, NOT flagged as leak), description should be non-empty
     target_file = tmp_path / "receitas" / "knowledge" / "n.md"
     assert target_file.exists()
     content = target_file.read_text(encoding="utf-8")
-    assert "ref: canvas-abc" in content, f"Expected 'ref: canvas-abc' in frontmatter, got:\n{content}"
+    assert f"ref: {canvas_id}" in content, f"Expected 'ref: {canvas_id}' in frontmatter, got:\n{content}"
     assert "description:" in content, f"Expected 'description:' in frontmatter, got:\n{content}"
     # description should be non-empty (title fallback "n")
     lines = content.split("\n")

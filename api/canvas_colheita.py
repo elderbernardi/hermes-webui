@@ -66,6 +66,21 @@ def list_cards(canvas_id: str) -> list[dict]:
         merged[rec["id"]] = cur
     return list(merged.values())
 
+def _body_after_frontmatter(text: str) -> str:
+    """Return the document body, excluding a leading YAML --- frontmatter block.
+
+    Spec §4.B: clean_portable scans the CORPO only, not metadata.
+    A legitimate ref: canvas_... in the frontmatter is provenance, not an instance leak.
+    """
+    if text.startswith("---"):
+        # Find the closing '---' fence on its own line
+        idx = text.find("\n---", 3)
+        if idx != -1:
+            nl = text.find("\n", idx + 1)
+            return text[nl + 1:] if nl != -1 else ""
+    return text
+
+
 def judge_committed(target_path: str, log_path: str, _validate=None) -> dict:
     """fable-judge mecânico: verifica por execução/diff, nunca lendo relatório."""
     tp, lp = Path(target_path), Path(log_path)
@@ -74,12 +89,14 @@ def judge_committed(target_path: str, log_path: str, _validate=None) -> dict:
     if not checks["exists"]:
         reasons.append(f"arquivo ausente: {target_path}")
         return {"ok": False, "checks": checks, "reasons": reasons}
-    body = tp.read_text(encoding="utf-8")
+    full_text = tp.read_text(encoding="utf-8")
     validate = _validate or _default_validate
     checks["frontmatter"] = bool(validate(str(tp)))
     if not checks["frontmatter"]:
         reasons.append("frontmatter OKF inválido")
-    leaks = [pat.pattern for pat in _INSTANCE_PATTERNS if pat.search(body)]
+    # Scan body only (after frontmatter) for instance leaks
+    body_text = _body_after_frontmatter(full_text)
+    leaks = [pat.pattern for pat in _INSTANCE_PATTERNS if pat.search(body_text)]
     checks["clean_portable"] = not leaks
     if leaks:
         reasons.append(f"clean-portable: possível vazamento de instância/segredo ({leaks})")
