@@ -192,8 +192,15 @@ _NATURE_TYPE_MAP = {
 _EPISTEMIC_NATURES = {"knowledge", "decision", "reflection"}
 
 
-def _build_frontmatter(card: dict, now: str | None = None, today: str | None = None) -> str:
-    """Build OKF v0.2 YAML frontmatter block for an acervo card."""
+def _build_frontmatter(card: dict, canvas_id: str = "", now: str | None = None, today: str | None = None) -> str:
+    """Build OKF v0.2 YAML frontmatter block for an acervo card.
+
+    Args:
+        card: The colheita card dict
+        canvas_id: The originating canvas session id (for sources[].ref provenance)
+        now: ISO timestamp (defaults to current time)
+        today: ISO date (defaults to today)
+    """
     if now is None:
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
     if today is None:
@@ -201,19 +208,18 @@ def _build_frontmatter(card: dict, now: str | None = None, today: str | None = N
     nature = card.get("nature", "knowledge")
     okf_type = _NATURE_TYPE_MAP.get(nature, nature)
     title = card.get("title", "")
-    description = card.get("porque", "")
+    # Always emit description: use porque if present, else title, else fallback
+    description = (card.get("porque") or title or "sem descrição")[:160]
     tags_raw = card.get("tags") or []
     cls = card.get("class", "volátil")
-    canvas_id = card.get("id", "")
 
     lines = [
         "---",
         "schema: acervo/v0.2",
         f"type: {okf_type}",
         f"title: {json.dumps(title, ensure_ascii=False)}",
+        f"description: {json.dumps(description, ensure_ascii=False)}",
     ]
-    if description:
-        lines.append(f"description: {json.dumps(description, ensure_ascii=False)}")
     if tags_raw:
         lines.append("tags:")
         for tag in tags_raw:
@@ -373,7 +379,7 @@ def handle_colheita_post(handler, path: str, body: dict) -> bool:
                 porque = (card.get("porque") or "")[:160]
 
                 # Build frontmatter + corpo
-                frontmatter = _build_frontmatter(card)
+                frontmatter = _build_frontmatter(card, canvas_id=cid)
                 ref = card.get("ref")
                 if ref and Path(ref).is_file():
                     corpo = Path(ref).read_text(encoding="utf-8")
