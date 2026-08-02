@@ -283,6 +283,9 @@ def _handle_launch(handler, body: dict) -> None:
 
 
 def handle_canvas_post(handler, path: str, body: dict) -> bool:
+    if path.startswith("/api/canvas/colheita/"):  # MOD-015 (F4): forward à Colheita
+        from api.canvas_colheita import handle_colheita_post
+        return handle_colheita_post(handler, path, body)
     if path.startswith("/api/canvas/curador/"):   # MOD-013 (F2): forward ao Curador
         from api.canvas_curador import handle_curador_post
         return handle_curador_post(handler, path, body)
@@ -386,6 +389,9 @@ def _stream_events(handler, job: dict, cursor: int) -> None:
 
 
 def handle_canvas_get(handler, parsed) -> bool:
+    if parsed.path.startswith("/api/canvas/colheita/"):  # MOD-015 (F4): forward à Colheita
+        from api.canvas_colheita import handle_colheita_get
+        return handle_colheita_get(handler, parsed)
     if parsed.path.startswith("/api/canvas/curador/"):   # MOD-013 (F2): forward ao Curador
         from api.canvas_curador import handle_curador_get
         return handle_curador_get(handler, parsed)
