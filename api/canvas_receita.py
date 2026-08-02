@@ -78,6 +78,7 @@ def _build_recipe_frontmatter(doc: dict, now: str | None = None, today: str | No
         today = time.strftime("%Y-%m-%d")
 
     focus = doc.get("focus") or ""
+    vetor = doc.get("vetor") or ""
     nature = "workflow" if doc.get("shape") == "plano-primeiro" else "template"
     title = focus[:80] or "receita"
     description = focus[:160] or "receita"
@@ -88,6 +89,7 @@ def _build_recipe_frontmatter(doc: dict, now: str | None = None, today: str | No
         f"type: {nature}",
         f'title: {json.dumps(title, ensure_ascii=False)}',
         f"focus_template: {json.dumps(focus, ensure_ascii=False)}",
+        f"vetor: {vetor}",
         f'description: {json.dumps(description, ensure_ascii=False)}',
         "tags:",
         "  - receita",

@@ -47,7 +47,7 @@ def test_prefill_from_recipe_seeds_new_canvas():
 # ── Task 7: endpoint tests ────────────────────────────────────────────────────
 
 def test_canonizar_writes_recipe(tmp_path, monkeypatch):
-    """canonizar: writes recipe file with vetor in body and focus_template in frontmatter.
+    """canonizar: writes recipe file with vetor in frontmatter and body, focus_template in frontmatter.
     No instance id (canvas_20260801_abc) must appear in the body."""
     monkeypatch.setattr(canvas_store, "load_canvas", lambda cid: CANVAS)
 
@@ -78,8 +78,11 @@ def test_canonizar_writes_recipe(tmp_path, monkeypatch):
     # Body must contain vetor but NOT the instance canvas_id
     assert "vetor: execucao" in written
     assert "canvas_20260801_abc" not in written
-    # Frontmatter must have focus_template
+    # Frontmatter must have both focus_template and vetor (proves canonizar emits vetor)
     assert "focus_template:" in written
+    # Split frontmatter from body to verify vetor is in the frontmatter, not just the body
+    fm, _ = R._split_frontmatter(written)
+    assert "vetor: execucao" in fm, "vetor must be emitted in frontmatter by _build_recipe_frontmatter"
 
 
 def test_canonizar_workflow_shape(tmp_path, monkeypatch):
