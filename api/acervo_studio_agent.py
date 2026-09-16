@@ -102,11 +102,22 @@ def _run_agent_text(system_prompt, user_prompt, *, session=None, enabled_toolset
             agent = AIAgent(
                 model=rt["model"], provider=rt["provider"], base_url=rt["base_url"],
                 api_key=rt["api_key"], platform="webui", quiet_mode=True,
-                enabled_toolsets=list(enabled_toolsets), session_id=sid)
-            result = agent.run_conversation(
-                user_message=user_prompt, system_message=system_prompt,
-                conversation_history=[], task_id=sid)
-            return str((result or {}).get("final_response") or "").strip()
+                enabled_toolsets=list(enabled_toolsets), session_id=sid,
+                skip_memory=True)
+            try:
+                result = agent.run_conversation(
+                    user_message=user_prompt, system_message=system_prompt,
+                    conversation_history=[], task_id=sid)
+                if (not isinstance(result, dict)
+                        or result.get("completed") is not True
+                        or any(result.get(k) for k in ("failed", "interrupted", "partial", "error"))):
+                    raise AgentUnavailable("agent turn did not complete successfully")
+                text = result.get("final_response")
+                if not isinstance(text, str) or not text.strip():
+                    raise AgentUnavailable("agent returned no usable response")
+                return text.strip()
+            finally:
+                agent.close()
     except AgentUnavailable:
         raise
     except Exception as e:
@@ -401,8 +412,13 @@ def promote(root, iid, routing, *, session=None):
         text = _run_agent_text(_PROMOTE_SYSTEM, user_prompt, session=session)
     except AgentUnavailable:
         return {"ok": False, "offline": True}
-    crafted = _extract_json(text) or {}
-    body_md = str(crafted.get("body_markdown", "") or "").strip() or content or title
+    crafted = _extract_json(text)
+    if not isinstance(crafted, dict):
+        return {"ok": False, "error": "agent returned invalid semantic content"}
+    body_md = crafted.get("body_markdown")
+    if not isinstance(body_md, str) or not body_md.strip():
+        return {"ok": False, "error": "agent returned empty or invalid page body"}
+    body_md = body_md.strip()
     class_name = str(crafted.get("class", "") or "").strip().lower()
     class_name = "perene" if class_name == "perene" else "volátil"
     description = str(crafted.get("description", "") or "").strip()[:160] or title
