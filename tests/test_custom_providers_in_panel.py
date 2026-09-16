@@ -264,24 +264,30 @@ class TestCustomProvidersInGetProviders:
 
 
 class TestDeepSeekV4Models:
-    """Verify DeepSeek V4 models are in the model lists, V3 is removed."""
+    """Verify the DeepSeek provider offers exactly the vendor's current ids."""
 
-    def test_v4_models_in_provider_models(self):
-        """_PROVIDER_MODELS['deepseek'] should contain v4 and legacy v3 entries."""
+    def test_provider_models_mirror_native_api(self):
+        """_PROVIDER_MODELS['deepseek'] mirrors GET https://api.deepseek.com/v1/models."""
         from api.config import _PROVIDER_MODELS
         ds_models = _PROVIDER_MODELS.get("deepseek", [])
         ids = {m["id"] for m in ds_models}
 
-        assert "deepseek-v4-flash" in ids, f"v4-flash missing: {ids}"
+        # Current generations: V4.1-Flash (model id has no v<N> marker since the
+        # 2026-09 rename) and V4-Pro-0813.
+        assert "deepseek-flash" in ids, f"flash missing: {ids}"
         assert "deepseek-v4-pro" in ids, f"v4-pro missing: {ids}"
 
-        # Legacy models still present (deprecated 2026-07-24, not yet removed)
-        assert "deepseek-chat-v3-0324" in ids, (
-            f"V3 legacy should remain until deprecation date: {ids}"
-        )
-        assert "deepseek-reasoner" in ids, (
-            f"Reasoner legacy should remain until deprecation date: {ids}"
-        )
+        # Retired ids the native API no longer serves as first-class models:
+        # deepseek-chat-v3-0324 / deepseek-r1 answer HTTP 400; deepseek-v4-flash and
+        # deepseek-reasoner are accepted only as aliases of V4.1-Flash. Offering them
+        # in the picker surfaces models the account cannot select.
+        retired = {
+            "deepseek-v4-flash",
+            "deepseek-chat-v3-0324",
+            "deepseek-reasoner",
+            "deepseek-r1",
+        }
+        assert not (ids & retired), f"retired DeepSeek ids still offered: {sorted(ids & retired)}"
 
     def test_zai_models_include_glm_series(self):
         """_PROVIDER_MODELS['zai'] should have GLM-5.x and GLM-4.x models."""
@@ -308,12 +314,16 @@ class TestDeepSeekV4Models:
         assert zai["default_model"] == "glm-5.1"
         assert zai["default_base_url"] == "https://open.bigmodel.cn/api/paas/v4"
 
-    def test_deepseek_onboarding_default_is_v4(self):
-        """DeepSeek onboarding default should be v4-flash, not V3."""
+    def test_deepseek_onboarding_default_is_current_generation(self):
+        """DeepSeek onboarding default should be the live flash id, not a retired alias."""
         from api.onboarding import _SUPPORTED_PROVIDER_SETUPS
         ds = _SUPPORTED_PROVIDER_SETUPS.get("deepseek", {})
-        assert ds.get("default_model") == "deepseek-v4-flash", (
-            f"DeepSeek default should be v4-flash, got: {ds.get('default_model')}"
+        offered = {m["id"] for m in ds.get("models", [])}
+        assert ds.get("default_model") == "deepseek-flash", (
+            f"DeepSeek default should be deepseek-flash, got: {ds.get('default_model')}"
+        )
+        assert ds["default_model"] in offered, (
+            f"default {ds['default_model']!r} is not in the offered list: {offered}"
         )
         assert ds.get("default_base_url") == "https://api.deepseek.com", (
             f"Base URL should be bare domain, got: {ds.get('default_base_url')}"

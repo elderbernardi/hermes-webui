@@ -1108,8 +1108,8 @@ _FALLBACK_MODELS = [
     {"provider": "Google",    "id": "google/gemini-3.1-flash-lite-preview",     "label": "Gemini 3.1 Flash Lite Preview"},
     {"provider": "Google",    "id": "google/gemini-2.5-pro",                    "label": "Gemini 2.5 Pro"},
     {"provider": "Google",    "id": "google/gemini-2.5-flash",                  "label": "Gemini 2.5 Flash"},
-    # DeepSeek
-    {"provider": "DeepSeek",  "id": "deepseek/deepseek-v4-flash",          "label": "DeepSeek V4 Flash"},
+    # DeepSeek (OpenRouter ids — v4.1-flash is the current Flash generation)
+    {"provider": "DeepSeek",  "id": "deepseek/deepseek-v4.1-flash",        "label": "DeepSeek V4.1 Flash"},
     {"provider": "DeepSeek",  "id": "deepseek/deepseek-v4-pro",            "label": "DeepSeek V4 Pro"},
     {"provider": "DeepSeek",  "id": "deepseek/deepseek-chat-v3-0324",      "label": "DeepSeek V3 (legacy)"},
     {"provider": "DeepSeek",  "id": "deepseek/deepseek-r1",                "label": "DeepSeek R1 (legacy)"},
@@ -1657,11 +1657,13 @@ _PROVIDER_MODELS = {
         {"id": "gemini-2.5-pro",                    "label": "Gemini 2.5 Pro"},
         {"id": "gemini-2.5-flash",                  "label": "Gemini 2.5 Flash"},
     ],
+    # DeepSeek native API — synced 2026-09-16 from https://api.deepseek.com/v1/models.
+    # Only these two ids are accepted: ``deepseek-chat``/``deepseek-reasoner``/
+    # ``deepseek-v4-flash`` are retired aliases the vendor now serves as V4.1-Flash
+    # (``deepseek-v4-flash`` and ``deepseek-chat-v3-0324`` also 400 on the native API).
     "deepseek": [
-        {"id": "deepseek-v4-flash", "label": "DeepSeek V4 Flash"},
+        {"id": "deepseek-flash", "label": "DeepSeek V4.1 Flash"},
         {"id": "deepseek-v4-pro", "label": "DeepSeek V4 Pro"},
-        {"id": "deepseek-chat-v3-0324", "label": "DeepSeek V3 (legacy)"},
-        {"id": "deepseek-reasoner", "label": "DeepSeek Reasoner (legacy)"},
     ],
     "nous": [
         {"id": "@nous:anthropic/claude-opus-4.6",     "label": "Claude Opus 4.6 (via Nous)"},

@@ -134,7 +134,7 @@ _SUPPORTED_PROVIDER_SETUPS = {
     "deepseek": {
         "label": "DeepSeek",
         "env_var": "DEEPSEEK_API_KEY",
-        "default_model": "deepseek-v4-flash",
+        "default_model": "deepseek-flash",
         "default_base_url": "https://api.deepseek.com",
         "requires_base_url": False,
         "models": list(_PROVIDER_MODELS.get("deepseek", [])),
