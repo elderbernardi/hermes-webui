@@ -73,7 +73,7 @@ def _build_recipe_frontmatter(doc: dict, now: str | None = None, today: str | No
     focus_template lives only in the frontmatter.
     """
     if now is None:
-        now = time.strftime("%Y-%m-%dT%H:%M:%S")
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ")
     if today is None:
         today = time.strftime("%Y-%m-%d")
 
@@ -192,7 +192,7 @@ def handle_receita_post(handler, path: str, body: dict) -> bool:
             _j(handler, {"error": "canvas desconhecido"}, 404)
             return True
 
-        nature = "workflow" if doc.get("shape") == "plano-primeiro" else "template"
+        nature = "workflows" if doc.get("shape") == "plano-primeiro" else "templates"
         focus = doc.get("focus") or ""
         title = focus[:80] or "receita"
 
@@ -213,7 +213,8 @@ def handle_receita_post(handler, path: str, body: dict) -> bool:
                 "--receipt-out", receipt_tmp,
             ])
             if rc != 0:
-                _j(handler, {"error": "prepare-write falhou", "detail": stderr[:200]}, 500)
+                detail = stderr or stdout
+                _j(handler, {"error": "prepare-write falhou", "detail": detail[:200]}, 500)
                 return True
 
             # Parse receipt from stdout or receipt-out file
@@ -258,7 +259,8 @@ def handle_receita_post(handler, path: str, body: dict) -> bool:
                     pass
 
             if rc2 != 0:
-                _j(handler, {"error": "commit-write falhou", "detail": stderr2[:200]}, 500)
+                detail2 = stderr2 or stdout2
+                _j(handler, {"error": "commit-write falhou", "detail": detail2[:200]}, 500)
                 return True
 
             try:

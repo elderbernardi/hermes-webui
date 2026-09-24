@@ -219,7 +219,7 @@ def _build_frontmatter(card: dict, canvas_id: str = "", now: str | None = None, 
         today: ISO date (defaults to today)
     """
     if now is None:
-        now = time.strftime("%Y-%m-%dT%H:%M:%S")
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ")
     if today is None:
         today = time.strftime("%Y-%m-%d")
     nature = card.get("nature", "knowledge")
@@ -227,7 +227,7 @@ def _build_frontmatter(card: dict, canvas_id: str = "", now: str | None = None, 
     title = card.get("title", "")
     # Always emit description: use porque if present, else title, else fallback
     description = (card.get("porque") or title or "sem descrição")[:160]
-    tags_raw = card.get("tags") or []
+    tags_raw = card.get("tags") or ["colheita"]
     cls = card.get("class", "volátil")
 
     lines = [
@@ -237,10 +237,9 @@ def _build_frontmatter(card: dict, canvas_id: str = "", now: str | None = None, 
         f"title: {json.dumps(title, ensure_ascii=False)}",
         f"description: {json.dumps(description, ensure_ascii=False)}",
     ]
-    if tags_raw:
-        lines.append("tags:")
-        for tag in tags_raw:
-            lines.append(f"  - {tag}")
+    lines.append("tags:")
+    for tag in tags_raw:
+        lines.append(f"  - {tag}")
     lines += [
         f"created_at: {now}",
         f"class: {cls}",
@@ -393,7 +392,7 @@ def handle_colheita_post(handler, path: str, body: dict) -> bool:
                 log_path = receipt.get("log_path", "")
                 trust = card.get("source_trust", "agent")
                 cls = card.get("class", "volátil")
-                porque = (card.get("porque") or "")[:160]
+                porque = (card.get("porque") or card.get("title") or "sem descrição")[:160]
 
                 # Build frontmatter + corpo
                 frontmatter = _build_frontmatter(card, canvas_id=cid)
@@ -446,7 +445,11 @@ def handle_colheita_post(handler, path: str, body: dict) -> bool:
                         committed += 1
                         items.append({"card_id": card_id, "judge": judge})
                     else:
-                        judge = {"ok": False, "checks": {}, "reasons": [f"commit-write falhou: {_stderr[:200]}"]}
+                        try:
+                            err_detail = json.loads(stdout).get("error", stdout)
+                        except Exception:
+                            err_detail = stdout or _stderr
+                        judge = {"ok": False, "checks": {}, "reasons": [f"commit-write falhou: {err_detail[:200]}"]}
                         set_status(cid, card_id, "committed_unverified", judge=judge)
                         _emit(cid, "colheita_committed", {**card, "status": "committed_unverified", "judge": judge})
                         unverified += 1
